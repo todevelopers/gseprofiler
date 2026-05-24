@@ -91,12 +91,13 @@ jobs:
           with open('data/io.github.todevelopers.GseProfiler.metainfo.xml', encoding='utf-8') as f:
               xml_doc = f.read()
 
-          xml_doc = xml_doc.replace('<releases>', f'<releases>\n{entry}', 1)
-
-          with open('data/io.github.todevelopers.GseProfiler.metainfo.xml', 'w', encoding='utf-8') as f:
-              f.write(xml_doc)
-
-          print(f'Injected release {VERSION} ({DATE})')
+          if f'version="{VERSION}"' in xml_doc:
+              print(f'Release {VERSION} already in metainfo.xml, skipping')
+          else:
+              xml_doc = xml_doc.replace('<releases>', f'<releases>\n{entry}', 1)
+              with open('data/io.github.todevelopers.GseProfiler.metainfo.xml', 'w', encoding='utf-8') as f:
+                  f.write(xml_doc)
+              print(f'Injected release {VERSION} ({DATE})')
           PYEOF
 
       - name: Commit and re-tag
@@ -189,14 +190,29 @@ jobs:
 
       - name: Update Flatpak manifest source URL and sha256
         run: |
-          VERSION="${{ needs.version-bump.outputs.version }}"
-          SHA256="${{ needs.release.outputs.sha256 }}"
-          sed -i \
-            "s|releases/download/v[0-9.]*/gseprofiler-[0-9.]*.tar.gz|releases/download/v${VERSION}/gseprofiler-${VERSION}.tar.gz|" \
-            build-aux/io.github.todevelopers.GseProfiler.yml
-          sed -i \
-            "/gseprofiler-[0-9.]*.tar.gz/{ n; s|sha256: .*|sha256: ${SHA256}| }" \
-            build-aux/io.github.todevelopers.GseProfiler.yml
+          export VERSION="${{ needs.version-bump.outputs.version }}"
+          export SHA256="${{ needs.release.outputs.sha256 }}"
+          python3 - <<'PYEOF'
+          import re, os
+          VERSION  = os.environ['VERSION']
+          SHA256   = os.environ['SHA256']
+          manifest = 'build-aux/io.github.todevelopers.GseProfiler.yml'
+          with open(manifest) as f:
+              content = f.read()
+          content = re.sub(
+              r'releases/download/v[0-9.]+/gseprofiler-[0-9.]+\.tar\.gz',
+              f'releases/download/v{VERSION}/gseprofiler-{VERSION}.tar.gz',
+              content
+          )
+          content = re.sub(
+              r'(url: https://github\.com/todevelopers/gseprofiler/releases/download/v[^\n]+\n\s*sha256: )[^\n]+',
+              lambda m: m.group(1) + SHA256,
+              content
+          )
+          with open(manifest, 'w') as f:
+              f.write(content)
+          print(f'Updated manifest to v{VERSION} sha256={SHA256[:12]}...')
+          PYEOF
 
       - name: Commit manifest update
         run: |
