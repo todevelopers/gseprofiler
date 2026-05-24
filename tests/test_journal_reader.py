@@ -1,0 +1,286 @@
+"""Unit tests for JournalReader.
+
+Tests not marked with @needs_systemd run without systemd installed (Windows,
+plain WSL). Tests marked @needs_systemd are skipped when systemd.journal is
+absent.
+"""
+
+import os
+import sys
+from datetime import datetime
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+pytest.importorskip("gi", reason="PyGObject (gi) not available in this environment")
+
+try:
+    import systemd.journal  # noqa: F401
+    _SD_AVAILABLE = True
+except ImportError:
+    _SD_AVAILABLE = False
+
+needs_systemd = pytest.mark.skipif(
+    not _SD_AVAILABLE, reason="systemd.journal not installed"
+)
+
+
+# ── parse_extra_args ──────────────────────────────────────────────────────────
+
+def test_parse_extra_args_strips_journalctl_prefix():
+    from app.core.journal_reader import parse_extra_args
+    assert parse_extra_args("journalctl --user") == ["--user"]
+
+
+def test_parse_extra_args_strips_owned_flags():
+    from app.core.journal_reader import parse_extra_args
+    result = parse_extra_args("journalctl --follow --no-pager -o json -n 200 --user")
+    assert result == ["--user"]
+
+
+def test_parse_extra_args_strips_after_cursor():
+    from app.core.journal_reader import parse_extra_args
+    result = parse_extra_args("journalctl --after-cursor=abc123 -u gnome-shell.service")
+    assert result == ["-u", "gnome-shell.service"]
+
+
+def test_parse_extra_args_empty():
+    from app.core.journal_reader import parse_extra_args
+    assert parse_extra_args("") == []
+    assert parse_extra_args("journalctl") == []
+
+
+def test_parse_extra_args_invalid_quoting():
+    from app.core.journal_reader import parse_extra_args
+    assert parse_extra_args("journalctl --unit='unclosed") == []
+
+
+def test_parse_extra_args_preserves_passthrough_flags():
+    from app.core.journal_reader import parse_extra_args
+    result = parse_extra_args("journalctl --user -t gnome-shell --boot -p 3")
+    assert result == ["--user", "-t", "gnome-shell", "--boot", "-p", "3"]
+
+
+# ── _parse_entry (no systemd needed) ─────────────────────────────────────────
+
+def _make_reader():
+    from app.core.journal_reader import JournalReader
+    return JournalReader()
+
+
+def test_parse_entry_basic():
+    reader = _make_reader()
+    entry = {
+        "__REALTIME_TIMESTAMP": datetime(2024, 1, 1, 12, 0, 0),
+        "PRIORITY": 6,
+        "SYSLOG_IDENTIFIER": "gnome-shell",
+        "MESSAGE": "Extension loaded",
+        "__CURSOR": "s=abc123",
+    }
+    result = reader._parse_entry(entry)
+    assert result is not None
+    assert result.priority == 6
+    assert result.priority_name == "INFO"
+    assert result.identifier == "gnome-shell"
+    assert result.message == "Extension loaded"
+    assert result.raw["__CURSOR"] == "s=abc123"
+
+
+def test_parse_entry_bytes_message_and_identifier():
+    reader = _make_reader()
+    entry = {
+        "__REALTIME_TIMESTAMP": datetime(2024, 1, 1),
+        "PRIORITY": 3,
+        "SYSLOG_IDENTIFIER": b"dbus-daemon",
+        "MESSAGE": b"Binary \xff data",
+        "__CURSOR": "s=xyz",
+    }
+    result = reader._parse_entry(entry)
+    assert result is not None
+    assert result.identifier == "dbus-daemon"
+    assert "Binary" in result.message
+    assert result.priority == 3
+    assert result.priority_name == "ERROR"
+
+
+def test_parse_entry_integer_usec_timestamp():
+    reader = _make_reader()
+    ts_usec = 1_704_067_200_000_000  # 2024-01-01 00:00:00 UTC
+    entry = {
+        "__REALTIME_TIMESTAMP": str(ts_usec),
+        "PRIORITY": "7",
+        "SYSLOG_IDENTIFIER": "test",
+        "MESSAGE": "hello",
+    }
+    result = reader._parse_entry(entry)
+    assert result is not None
+    assert result.priority == 7
+    assert result.priority_name == "DEBUG"
+
+
+@pytest.mark.parametrize("bad_prio", [-1, 8, 100, "bogus", None])
+def test_parse_entry_clamps_priority(bad_prio):
+    reader = _make_reader()
+    entry = {
+        "__REALTIME_TIMESTAMP": datetime(2024, 1, 1),
+        "PRIORITY": bad_prio,
+        "MESSAGE": "test",
+    }
+    result = reader._parse_entry(entry)
+    assert result is not None
+    assert 0 <= result.priority <= 7
+
+
+def test_parse_entry_missing_fields_yields_defaults():
+    reader = _make_reader()
+    result = reader._parse_entry({})
+    assert result is not None
+    assert result.message == ""
+    assert result.identifier == ""
+    assert result.priority == 6  # default INFO
+    assert isinstance(result.timestamp, datetime)
+
+
+# ── _configure_reader (MockReader — no systemd needed) ───────────────────────
+
+class _MockReader:
+    def __init__(self):
+        self.matches: list[tuple] = []
+        self.boot_filtered = False
+        self.log_level_set: int | None = None
+
+    def add_match(self, **kwargs):
+        self.matches.extend(kwargs.items())
+
+    def this_boot(self):
+        self.boot_filtered = True
+
+    def log_level(self, level: int):
+        self.log_level_set = level
+
+
+def test_configure_reader_identifier_short():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-t", "gnome-shell"])
+    assert ("SYSLOG_IDENTIFIER", "gnome-shell") in r.matches
+
+
+def test_configure_reader_identifier_long():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--identifier=gnome-shell"])
+    assert ("SYSLOG_IDENTIFIER", "gnome-shell") in r.matches
+
+
+def test_configure_reader_identifier_space_form():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--identifier", "gnome-shell"])
+    assert ("SYSLOG_IDENTIFIER", "gnome-shell") in r.matches
+
+
+def test_configure_reader_unit_short():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-u", "gnome-shell.service"])
+    assert ("_SYSTEMD_UNIT", "gnome-shell.service") in r.matches
+
+
+def test_configure_reader_unit_long():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--unit=gnome-shell.service"])
+    assert ("_SYSTEMD_UNIT", "gnome-shell.service") in r.matches
+
+
+def test_configure_reader_boot_short():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-b"])
+    assert r.boot_filtered
+
+
+def test_configure_reader_boot_long():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--boot"])
+    assert r.boot_filtered
+
+
+def test_configure_reader_priority_short():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-p", "3"])
+    assert r.log_level_set == 3
+
+
+def test_configure_reader_priority_long():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--priority=4"])
+    assert r.log_level_set == 4
+
+
+def test_configure_reader_combined():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-b", "-t", "dbus", "--unit=dbus.service", "-p", "6"])
+    assert r.boot_filtered
+    assert ("SYSLOG_IDENTIFIER", "dbus") in r.matches
+    assert ("_SYSTEMD_UNIT", "dbus.service") in r.matches
+    assert r.log_level_set == 6
+
+
+def test_configure_reader_ignores_user_system_flags():
+    """--user and --system are handled by _reader_flags, not _configure_reader."""
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["--user", "--system"])
+    assert not r.boot_filtered
+    assert r.matches == []
+    assert r.log_level_set is None
+
+
+# ── _reader_flags (requires systemd.journal) ──────────────────────────────────
+
+@needs_systemd
+def test_reader_flags_default_is_local_only():
+    from app.core.journal_reader import _reader_flags
+    from systemd import journal
+    flags = _reader_flags([])
+    assert flags & journal.LOCAL_ONLY
+    assert not (flags & journal.CURRENT_USER)
+    assert not (flags & journal.SYSTEM)
+
+
+@needs_systemd
+def test_reader_flags_user_adds_current_user():
+    from app.core.journal_reader import _reader_flags
+    from systemd import journal
+    flags = _reader_flags(["--user"])
+    assert flags & journal.LOCAL_ONLY
+    assert flags & journal.CURRENT_USER
+    assert not (flags & journal.SYSTEM)
+
+
+@needs_systemd
+def test_reader_flags_system_adds_system():
+    from app.core.journal_reader import _reader_flags
+    from systemd import journal
+    flags = _reader_flags(["--system"])
+    assert flags & journal.LOCAL_ONLY
+    assert flags & journal.SYSTEM
+    assert not (flags & journal.CURRENT_USER)
+
+
+@needs_systemd
+def test_reader_flags_both_user_and_system_uses_default():
+    """When both --user and --system are given, fall back to LOCAL_ONLY only."""
+    from app.core.journal_reader import _reader_flags
+    from systemd import journal
+    flags = _reader_flags(["--user", "--system"])
+    assert flags & journal.LOCAL_ONLY
+    assert not (flags & journal.CURRENT_USER)
+    assert not (flags & journal.SYSTEM)

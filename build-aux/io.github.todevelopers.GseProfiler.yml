@@ -10,8 +10,9 @@ finish-args:
   - --socket=wayland
   - --talk-name=org.gnome.Shell
   - --talk-name=org.gnome.Shell.Extensions
-  # Required for flatpak-spawn --host used by journal_reader.py
-  - --talk-name=org.freedesktop.Flatpak
+  # Read systemd journal directly (replaces flatpak-spawn --host journalctl)
+  - --filesystem=/run/log/journal:ro
+  - --filesystem=/var/log/journal:ro
   # Bridge extension install path
   - --filesystem=~/.local/share/gnome-shell/extensions:create
   # Unix socket shared with the bridge extension running in gnome-shell.
@@ -20,6 +21,17 @@ finish-args:
   - --filesystem=xdg-run/gse-profiler:create
 
 modules:
+  - name: python3-systemd
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index
+          --find-links="file://${PWD}" --prefix=${FLATPAK_DEST}
+          --no-build-isolation .
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/10/9e/ab4458e00367223bda2dd7ccf0849a72235ee3e29b36dce732685d9b7ad9/systemd-python-235.tar.gz
+        sha256: 4e57f39797fd5d9e2d22b8806a252d7c0106c936039d1e71c8c6b8008e695c0a
+
   - name: gse-profiler
     buildsystem: simple
     build-commands:

@@ -1,8 +1,5 @@
-import json
 import logging
-import os
 import shlex
-import subprocess
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,22 +10,14 @@ import gi
 gi.require_version("GLib", "2.0")
 from gi.repository import GLib, GObject
 
+try:
+    from systemd import journal as _sd_journal
+    _HAVE_SYSTEMD: bool = True
+except ImportError:
+    _sd_journal = None  # type: ignore[assignment]
+    _HAVE_SYSTEMD = False
+
 _log = logging.getLogger(__name__)
-
-# Detect Flatpak sandbox at import time — /.flatpak-info is created by the runtime.
-_IN_FLATPAK: bool = os.path.exists("/.flatpak-info")
-
-
-def _journalctl_prefix() -> list[str]:
-    """Return the command prefix for invoking journalctl.
-
-    Inside a Flatpak sandbox journalctl is not available directly, so we
-    delegate to flatpak-spawn which runs the command on the host.
-    """
-    if _IN_FLATPAK:
-        return ["flatpak-spawn", "--host", "journalctl"]
-    return ["journalctl"]
-
 
 PRIORITY_NAMES: dict[int, str] = {
     0: "EMERG",
@@ -47,11 +36,11 @@ _OWNED_PREFIXES = ("--output=", "--lines=", "--after-cursor=")
 
 
 def parse_extra_args(cmd_str: str) -> list[str]:
-    """Extract pass-through journalctl args from a user-supplied command string.
+    """Extract pass-through journalctl-compatible args from a user command string.
 
     Strips 'journalctl' and flags owned by JournalReader (--follow/-f,
     --output/-o, --lines/-n, --after-cursor, --no-pager).
-    Everything else (e.g. --user, -t, -u, --boot) is kept and forwarded.
+    Everything else (e.g. --user, -t, -u, --boot, -p) is kept and forwarded.
     """
     try:
         parts = shlex.split(cmd_str)
@@ -78,6 +67,50 @@ def parse_extra_args(cmd_str: str) -> list[str]:
     return result
 
 
+def _reader_flags(extra_args: list[str]) -> int:
+    """Compute journal.Reader flags from journalctl-style extra_args."""
+    flags: int = _sd_journal.LOCAL_ONLY
+    has_user = "--user" in extra_args
+    has_system = "--system" in extra_args
+    if has_user and not has_system:
+        flags |= _sd_journal.CURRENT_USER
+    elif has_system and not has_user:
+        flags |= _sd_journal.SYSTEM
+    # Default (neither): LOCAL_ONLY reads both system and current-user journals
+    return flags
+
+
+def _configure_reader(reader: Any, extra_args: list[str]) -> None:
+    """Apply matches, boot filter, and log level to an open journal.Reader."""
+    i = 0
+    while i < len(extra_args):
+        arg = extra_args[i]
+        if arg in ("-b", "--boot"):
+            reader.this_boot()
+        elif arg in ("-t", "--identifier") and i + 1 < len(extra_args):
+            i += 1
+            reader.add_match(SYSLOG_IDENTIFIER=extra_args[i])
+        elif arg.startswith("--identifier="):
+            reader.add_match(SYSLOG_IDENTIFIER=arg.split("=", 1)[1])
+        elif arg in ("-u", "--unit") and i + 1 < len(extra_args):
+            i += 1
+            reader.add_match(_SYSTEMD_UNIT=extra_args[i])
+        elif arg.startswith("--unit="):
+            reader.add_match(_SYSTEMD_UNIT=arg.split("=", 1)[1])
+        elif arg in ("-p", "--priority") and i + 1 < len(extra_args):
+            i += 1
+            try:
+                reader.log_level(int(extra_args[i]))
+            except (ValueError, AttributeError):
+                pass
+        elif arg.startswith("--priority="):
+            try:
+                reader.log_level(int(arg.split("=", 1)[1]))
+            except (ValueError, AttributeError):
+                pass
+        i += 1
+
+
 @dataclass
 class LogEntry:
     timestamp: datetime
@@ -89,12 +122,12 @@ class LogEntry:
 
 
 class JournalReader(GObject.Object):
-    """Polling journalctl reader using --after-cursor.
+    """Journal reader using systemd.journal.Reader.
 
-    Instead of --follow (which suffers from pipe-buffering issues), each poll
-    spawns a short-lived journalctl process that exits cleanly and flushes all
-    output. The cursor from the last seen entry is passed to the next invocation
-    via --after-cursor so no entries are missed or duplicated.
+    Opens the journal in a background thread, seeks to the last 200 entries
+    on start, then waits for new entries via reader.wait(). Cursor-based
+    position tracking ensures no entries are missed or duplicated across
+    stop/start cycles.
     """
 
     __gtype_name__ = "JournalReader"
@@ -102,6 +135,9 @@ class JournalReader(GObject.Object):
     __gsignals__ = {
         "log-entry": (GObject.SignalFlags.RUN_LAST, None, (object,)),
     }
+
+    _INITIAL_ENTRIES = 200
+    _WAIT_USEC = 1_000_000  # 1 second in microseconds
 
     def __init__(self) -> None:
         super().__init__()
@@ -119,6 +155,9 @@ class JournalReader(GObject.Object):
     def start(self, extra_args: list[str] | None = None) -> None:
         if self._running:
             return
+        if not _HAVE_SYSTEMD:
+            _log.error("systemd.journal not available; JournalReader disabled")
+            return
         self._extra_args = extra_args or []
         self._cursor = None
         self._generation += 1
@@ -126,7 +165,7 @@ class JournalReader(GObject.Object):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
-        _log.info("JournalReader started (polling, extra=%s)", self._extra_args)
+        _log.info("JournalReader started (extra=%s)", self._extra_args)
 
     def stop(self) -> None:
         if not self._running:
@@ -141,51 +180,60 @@ class JournalReader(GObject.Object):
     # ── Poll loop (background thread) ─────────────────────────────────────────
 
     def _poll_loop(self) -> None:
-        first = True
         gen = self._generation
-        while not self._stop_event.is_set():
-            self._do_poll(gen=gen, initial=first)
-            first = False
-            self._stop_event.wait(timeout=1.0)
-
-    def _do_poll(self, gen: int, initial: bool = False) -> None:
-        base = _journalctl_prefix()
-        if self._cursor is None:
-            cmd = base + ["--no-pager", "-o", "json", "-n", "200"] + self._extra_args
-        else:
-            cmd = base + [
-                "--no-pager", "-o", "json",
-                f"--after-cursor={self._cursor}",
-            ] + self._extra_args
+        try:
+            reader = _sd_journal.Reader(flags=_reader_flags(self._extra_args))
+        except Exception as exc:
+            _log.error("Failed to open journal reader: %s", exc)
+            return
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10
-            )
-        except subprocess.TimeoutExpired:
-            _log.warning("journalctl poll timed out")
-            return
-        except OSError as exc:
-            _log.error("journalctl spawn failed: %s", exc)
-            return
+            _configure_reader(reader, self._extra_args)
+            self._seek_initial(reader)
 
-        entries: list[LogEntry] = []
-        for raw_line in result.stdout.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            entry = self._parse_line(line)
-            if entry is not None:
-                cursor = entry.raw.get("__CURSOR")
-                if cursor:
-                    self._cursor = cursor
-                entries.append(entry)
+            # Drain entries already in the journal before entering the wait loop.
+            initial: list[LogEntry] = []
+            for entry in reader:
+                e = self._parse_entry(entry)
+                if e is not None:
+                    c = entry.get("__CURSOR")
+                    if c:
+                        self._cursor = c
+                    initial.append(e)
+            if initial:
+                GLib.idle_add(self._emit_batch, initial, gen)
 
-        if entries:
-            GLib.idle_add(self._emit_batch, entries, gen)
+            # Wait for new entries appended after the initial drain.
+            while not self._stop_event.is_set():
+                change = reader.wait(self._WAIT_USEC)
+                if change == _sd_journal.APPEND:
+                    batch: list[LogEntry] = []
+                    for entry in reader:
+                        e = self._parse_entry(entry)
+                        if e is not None:
+                            c = entry.get("__CURSOR")
+                            if c:
+                                self._cursor = c
+                            batch.append(e)
+                    if batch:
+                        GLib.idle_add(self._emit_batch, batch, gen)
+        finally:
+            reader.close()
+
+    def _seek_initial(self, reader: Any) -> None:
+        if self._cursor:
+            try:
+                reader.seek_cursor(self._cursor)
+                # get_next() positions AT the cursor entry; calling it once
+                # consumes it so the first iteration yields entries after it.
+                reader.get_next()
+                return
+            except Exception:
+                pass
+        reader.seek_tail()
+        reader.skip_previous(self._INITIAL_ENTRIES)
 
     def _emit_batch(self, entries: list[LogEntry], gen: int) -> bool:
-        # Discard if reader was stopped or restarted since this poll ran.
         if self._running and gen == self._generation:
             for entry in entries:
                 self.emit("log-entry", entry)
@@ -193,29 +241,39 @@ class JournalReader(GObject.Object):
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 
-    def _parse_line(self, line: str) -> "LogEntry | None":
+    def _parse_entry(self, entry: dict) -> "LogEntry | None":
+        ts_raw = entry.get("__REALTIME_TIMESTAMP")
         try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            return None
-
-        ts_raw = data.get("__REALTIME_TIMESTAMP", "0")
-        try:
-            timestamp = datetime.fromtimestamp(int(ts_raw) / 1_000_000)
+            if isinstance(ts_raw, datetime):
+                # systemd.journal returns timezone-aware datetimes; drop tz for
+                # consistency with the rest of the app (naive local time).
+                timestamp = ts_raw.replace(tzinfo=None)
+            elif ts_raw is not None:
+                timestamp = datetime.fromtimestamp(int(ts_raw) / 1_000_000)
+            else:
+                timestamp = datetime.now()
         except (ValueError, OSError):
             timestamp = datetime.now()
 
-        prio_raw = data.get("PRIORITY", "6")
+        prio_raw = entry.get("PRIORITY", 6)
         try:
             priority = max(0, min(7, int(prio_raw)))
         except (ValueError, TypeError):
             priority = 6
 
+        message = entry.get("MESSAGE", "")
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", errors="replace")
+
+        identifier = entry.get("SYSLOG_IDENTIFIER", "")
+        if isinstance(identifier, bytes):
+            identifier = identifier.decode("utf-8", errors="replace")
+
         return LogEntry(
             timestamp=timestamp,
             priority=priority,
             priority_name=PRIORITY_NAMES.get(priority, "INFO"),
-            identifier=str(data.get("SYSLOG_IDENTIFIER", "")),
-            message=str(data.get("MESSAGE", "")),
-            raw=data,
+            identifier=str(identifier),
+            message=str(message),
+            raw=dict(entry),
         )

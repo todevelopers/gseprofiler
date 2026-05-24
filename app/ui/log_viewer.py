@@ -178,8 +178,9 @@ class LogViewerView(Gtk.Box):
         self._cmd_entry.set_hexpand(True)
         self._cmd_entry.set_placeholder_text("journalctl --user -f")
         self._cmd_entry.set_tooltip_text(
-            "journalctl command to tail — --follow/-f is replaced by 1 s polling; "
-            "-o/-n/--after-cursor are managed internally"
+            "journalctl-compatible filter — supported flags: --user, --system, "
+            "-t/--identifier, -u/--unit, -b/--boot, -p/--priority; "
+            "--follow/-f and -o/-n/--after-cursor are ignored (managed internally)"
         )
         self._cmd_entry.connect("activate", self._on_cmd_activate)
         self._cmd_entry.connect("changed", self._on_cmd_changed)
