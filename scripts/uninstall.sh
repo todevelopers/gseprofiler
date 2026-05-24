@@ -40,7 +40,7 @@ else
 fi
 
 # ── App icon ───────────────────────────────────────────────────────────────────
-ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/org.gnome.GSEProfiler.svg"
+ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg"
 if [[ -f "$ICON_FILE" ]]; then
     info "Removing app icon…"
     rm -f "$ICON_FILE"
