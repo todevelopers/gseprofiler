@@ -71,29 +71,6 @@ jobs:
             git push
           fi
 
-  # ── Flatpak: lint manifest ────────────────────────────────────────────────────
-  flatpak-lint:
-    name: Flatpak lint (manifest)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install flatpak
-        run: sudo apt-get update -y && sudo apt-get install -y flatpak
-
-      - name: Add Flathub remote
-        run: flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
-      - name: Install org.flatpak.Builder
-        run: flatpak --user install -y flathub org.flatpak.Builder
-
-      - name: Lint manifest
-        run: |
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-            manifest build-aux/io.github.todevelopers.GseProfiler.yml || true
-
   # ── JavaScript: ESLint ────────────────────────────────────────────────────────
   javascript:
     name: JavaScript (eslint)
