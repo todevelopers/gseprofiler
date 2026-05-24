@@ -89,8 +89,8 @@ jobs:
             if [ "$error_count" -eq 0 ] && [ "$warning_count" -eq 0 ]; then
               echo "✅ **No issues found.**"
             else
-              [ "$error_count"   -gt 0 ] && echo "❌ **$error_count error(s)**"
-              [ "$warning_count" -gt 0 ] && echo "⚠️ **$warning_count warning(s)**"
+              if [ "$error_count"   -gt 0 ]; then echo "❌ **$error_count error(s)**"; fi
+              if [ "$warning_count" -gt 0 ]; then echo "⚠️ **$warning_count warning(s)**"; fi
             fi
 
             if [ "$error_count" -gt 0 ]; then
@@ -122,7 +122,10 @@ jobs:
             fi
 
             msg=$(jq -r '.message // ""' "$file")
-            [ -n "$msg" ] && echo "" && echo "> $msg"
+            if [ -n "$msg" ]; then
+              echo ""
+              echo "> $msg"
+            fi
           }
 
           output=$(
