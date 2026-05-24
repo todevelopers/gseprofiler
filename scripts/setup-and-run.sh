@@ -61,8 +61,8 @@ sed "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
     "$INSTALL_DIR/app/data/gse-profiler.desktop.in" \
     > "$DESKTOP_DIR/gse-profiler.desktop"
 
-cp "$INSTALL_DIR/app/data/icons/hicolor/scalable/apps/org.gnome.GSEProfiler.svg" \
-   "$ICON_DIR/org.gnome.GSEProfiler.svg"
+cp "$INSTALL_DIR/app/data/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg" \
+   "$ICON_DIR/io.github.todevelopers.GseProfiler.svg"
 
 command -v update-desktop-database &>/dev/null && \
     update-desktop-database "$DESKTOP_DIR"
