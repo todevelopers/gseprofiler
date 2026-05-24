@@ -50,4 +50,4 @@ modules:
     sources:
       - type: archive
         url: https://github.com/todevelopers/gseprofiler/releases/download/v1.0.1/gseprofiler-1.0.1.tar.gz
-        sha256: 8d37e72b2ad45437cdb53c589fba6a8e0c571f8779278ebe5110c909fd8203dc
+        sha256: 577285e32bf2dd6fb4d6020d1cac42155ac1adccbad615b473c368b5cda05b55
