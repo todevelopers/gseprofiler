@@ -68,6 +68,6 @@
   </screenshots>
 
   <releases>
-    <!-- injected by CI on each release -->
+    <release version="1.0.0" date="2026-05-21"/>
   </releases>
 </component>
