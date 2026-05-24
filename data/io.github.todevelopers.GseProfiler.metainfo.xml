@@ -26,9 +26,9 @@
 
   <launchable type="desktop-id">io.github.todevelopers.GseProfiler.desktop</launchable>
 
-  <url type="homepage">https://github.com/todevelopers/gse-profiler</url>
-  <url type="bugtracker">https://github.com/todevelopers/gse-profiler/issues</url>
-  <url type="contribute">https://github.com/todevelopers/gse-profiler</url>
+  <url type="homepage">https://github.com/todevelopers/gseprofiler</url>
+  <url type="bugtracker">https://github.com/todevelopers/gseprofiler/issues</url>
+  <url type="contribute">https://github.com/todevelopers/gseprofiler</url>
 
   <developer id="io.github.todevelopers">
     <name>Tomáš Gažovič</name>

@@ -37,5 +37,5 @@ modules:
           /app/share/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg
     sources:
       - type: archive
-        url: https://github.com/todevelopers/gse-profiler/releases/download/v1.0.0/gse-profiler-1.0.0.tar.gz
+        url: https://github.com/todevelopers/gseprofiler/releases/download/v1.0.0/gseprofiler-1.0.0.tar.gz
         sha256: b80c9c403d7fd9692176bb15b187d088fb3e806ad3753a47550ff3414a058fca

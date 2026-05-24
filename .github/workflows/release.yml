@@ -73,11 +73,11 @@ jobs:
         run: |
           VERSION="${{ needs.version-bump.outputs.version }}"
           git archive --format=tar.gz \
-            --prefix="gse-profiler-${VERSION}/" \
-            -o "gse-profiler-${VERSION}.tar.gz" \
+            --prefix="gseprofiler-${VERSION}/" \
+            -o "gseprofiler-${VERSION}.tar.gz" \
             HEAD
-          SHA256=$(sha256sum "gse-profiler-${VERSION}.tar.gz" | awk '{print $1}')
-          echo "TARBALL=gse-profiler-${VERSION}.tar.gz" >> "$GITHUB_ENV"
+          SHA256=$(sha256sum "gseprofiler-${VERSION}.tar.gz" | awk '{print $1}')
+          echo "TARBALL=gseprofiler-${VERSION}.tar.gz" >> "$GITHUB_ENV"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
@@ -130,7 +130,7 @@ jobs:
           VERSION="${{ needs.version-bump.outputs.version }}"
           SHA256="${{ needs.release.outputs.sha256 }}"
           sed -i \
-            "s|releases/download/v[0-9.]*/gse-profiler-[0-9.]*.tar.gz|releases/download/v${VERSION}/gse-profiler-${VERSION}.tar.gz|" \
+            "s|releases/download/v[0-9.]*/gseprofiler-[0-9.]*.tar.gz|releases/download/v${VERSION}/gseprofiler-${VERSION}.tar.gz|" \
             build-aux/io.github.todevelopers.GseProfiler.yml
           sed -i \
             "s|sha256: .*|sha256: ${SHA256}|" \
@@ -167,7 +167,7 @@ jobs:
             build-aux/io.github.todevelopers.GseProfiler.yml
           flatpak build-bundle repo \
             --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-            "gse-profiler-${VERSION}-x86_64.flatpak" \
+            "gseprofiler-${VERSION}-x86_64.flatpak" \
             io.github.todevelopers.GseProfiler
 
       - name: Install org.flatpak.Builder for lint
@@ -187,4 +187,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ needs.version-bump.outputs.version }}"
-          files: "gse-profiler-${{ needs.version-bump.outputs.version }}-x86_64.flatpak"
+          files: "gseprofiler-${{ needs.version-bump.outputs.version }}-x86_64.flatpak"
