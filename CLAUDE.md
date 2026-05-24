@@ -262,12 +262,6 @@ git push origin vX.Y.Z
 | `release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
 | `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle, attaches to Release |
 
-### Step 3 — Flathub (manual, separate)
-
-After the GitHub Release exists, open a PR in
-`github.com/flathub/io.github.todevelopers.GseProfiler` with the updated
-manifest URL + sha256. Run **Actions → Flathub lint** first to catch issues.
-
 ---
 
 ## Key Rules for the Agent
