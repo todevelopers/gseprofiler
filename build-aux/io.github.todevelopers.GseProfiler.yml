@@ -30,7 +30,7 @@ modules:
     sources:
       - type: archive
         url: https://files.pythonhosted.org/packages/10/9e/ab4458e00367223bda2dd7ccf0849a72235ee3e29b36dce732685d9b7ad9/systemd-python-235.tar.gz
-        sha256: 8d37e72b2ad45437cdb53c589fba6a8e0c571f8779278ebe5110c909fd8203dc
+        sha256: 4e57f39797fd5d9e2d22b8806a252d7c0106c936039d1e71c8c6b8008e695c0a
 
   - name: gse-profiler
     buildsystem: simple

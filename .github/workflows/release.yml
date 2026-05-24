@@ -195,7 +195,7 @@ jobs:
             "s|releases/download/v[0-9.]*/gseprofiler-[0-9.]*.tar.gz|releases/download/v${VERSION}/gseprofiler-${VERSION}.tar.gz|" \
             build-aux/io.github.todevelopers.GseProfiler.yml
           sed -i \
-            "s|sha256: .*|sha256: ${SHA256}|" \
+            "/gseprofiler-[0-9.]*.tar.gz/{ n; s|sha256: .*|sha256: ${SHA256}| }" \
             build-aux/io.github.todevelopers.GseProfiler.yml
 
       - name: Commit manifest update
