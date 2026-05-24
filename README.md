@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/data/icons/hicolor/scalable/apps/org.gnome.GSEProfiler.svg" width="128" height="128" alt="GSE Profiler">
+  <img src="app/data/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg" width="128" height="128" alt="GSE Profiler">
 </p>
 
 # GSE Profiler
