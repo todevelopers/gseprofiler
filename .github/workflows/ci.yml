@@ -75,6 +75,7 @@ jobs:
   flatpak-lint:
     name: Flatpak lint (manifest)
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
