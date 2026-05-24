@@ -1,3 +1,16 @@
+## [1.0.1] - 2026-05-24
+
+Flathub publish release.
+
+### Fixed
+- Replace `flatpak-spawn --host journalctl` with `systemd.journal.Reader` for direct journal access — removes the `finish-args-flatpak-spawn-access` Flathub blocker
+- Fix `skip_previous` API error on startup (`get_previous(N)` is the correct call)
+
+### Changed
+- Log Viewer no longer spawns a `journalctl` subprocess — reads the systemd journal directly via `systemd.journal.Reader` with `reader.wait()` for live tailing
+- Flatpak sandbox permissions: replaced `--talk-name=org.freedesktop.Flatpak` with `--filesystem=/run/log/journal:ro` and `--filesystem=/var/log/journal:ro`
+- Log Viewer filter field accepts journalctl-compatible flags (`--user`, `--system`, `-t`, `-u`, `-b`, `-p`) mapped directly to the journal reader API
+
 ## [1.0.0] - 2026-05-21
 
 First public release.
