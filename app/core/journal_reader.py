@@ -231,7 +231,7 @@ class JournalReader(GObject.Object):
             except Exception:
                 pass
         reader.seek_tail()
-        reader.skip_previous(self._INITIAL_ENTRIES)
+        reader.get_previous(self._INITIAL_ENTRIES)
 
     def _emit_batch(self, entries: list[LogEntry], gen: int) -> bool:
         if self._running and gen == self._generation:
