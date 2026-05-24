@@ -25,7 +25,7 @@ browse properties, see current values, and drill into nested objects on the fly.
 | Feature               | Description                                                                                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Extension Manager** | Browse all installed extensions with status, enable/disable with one click, open the source folder directly                                                 |
-| **Log Viewer**        | Live `journalctl` stream scoped to a single extension UUID; filter by log level and search full-text in real time                                           |
+| **Log Viewer**        | Live systemd journal stream scoped to a single extension UUID; journalctl-compatible filter syntax (`--user`, `-t`, `-u`, `-b`, `-p`); filter by log level and search full-text in real time |
 | **Profiler**          | Monkey-patch any extension at runtime. No code changes needed. Visualise timing as a flamegraph, swimlane, or histogram; export and reload sessions as JSON |
 | **Inspector**         | Inspect a live extension object: browse its properties and methods, see current values, and call methods interactively                                      |
 
@@ -168,7 +168,7 @@ on your system is touched.
 - Python 3.11+
 - GTK 4 and libadwaita 1
 - PyGObject (GTK4 bindings)
-- `journalctl` — for the log viewer (part of `systemd`)
+- `python3-systemd` — for the log viewer (`systemd.journal.Reader`); bundled automatically in the Flatpak
 
 ---
 
@@ -190,7 +190,7 @@ gse-profiler/
 │       ├── dbus_client.py      # D-Bus proxy for gnome-shell APIs
 │       ├── socket_server.py    # Unix socket server (async)
 │       ├── bridge_manager.py   # bridge install / update / hash check
-│       └── journal_reader.py   # journalctl --follow subprocess
+│       └── journal_reader.py   # systemd journal reader (systemd.journal.Reader)
 ├── bridge-extension/           # GJS GNOME Shell extension
 │   ├── extension.js
 │   ├── profiler.js
