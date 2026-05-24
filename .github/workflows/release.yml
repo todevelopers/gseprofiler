@@ -170,6 +170,17 @@ jobs:
             "gse-profiler-${VERSION}-x86_64.flatpak" \
             io.github.todevelopers.GseProfiler
 
+      - name: Install org.flatpak.Builder for lint
+        run: flatpak --user install -y flathub org.flatpak.Builder
+
+      - name: Lint manifest
+        run: >
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder
+          manifest build-aux/io.github.todevelopers.GseProfiler.yml
+
+      - name: Lint repo
+        run: flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
+
       - name: Attach Flatpak bundle to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
