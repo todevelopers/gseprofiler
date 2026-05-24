@@ -13,6 +13,7 @@ expect before opening a pull request.
 - [Bridge hash](#bridge-hash)
 - [Scripts reference](#scripts-reference)
 - [GitHub Actions workflows](#github-actions-workflows)
+- [Making a release](#making-a-release)
 - [Pull request checklist](#pull-request-checklist)
 
 ---
@@ -219,9 +220,15 @@ The workflow runs three jobs in sequence:
 1. Checks out `main` (not the tag commit).
 2. Extracts the version number from the tag name (strips the leading `v`).
 3. Patches `_BASE_VERSION` in `app/main.py` to the new version.
-4. Commits the change as `chore: bump version to X.Y.Z [skip ci]`, pushes it
-   to `main`, and force-moves the tag to the new commit.
-5. Outputs the final commit SHA for the downstream jobs.
+4. Injects a `<release>` entry into `data/io.github.todevelopers.GseProfiler.metainfo.xml`:
+   - Parses the `## [X.Y.Z]` section from `CHANGELOG.md` and converts it to
+     AppStream XML (`<p>` for paragraphs and section headers, `<ul><li>` for
+     bullet points, inline markup stripped).
+   - Falls back to a bare `<release version="…" date="…"/>` if no CHANGELOG
+     section is found.
+5. Commits both files as `chore: bump version to X.Y.Z [skip ci]`, pushes to
+   `main`, and force-moves the tag to the new commit.
+6. Outputs the final commit SHA for the downstream jobs.
 
 > If `_BASE_VERSION` is already correct (e.g. you patched it manually), the job
 > detects no diff and skips the commit.
@@ -260,6 +267,68 @@ git push origin v1.2.3
 
 That is all. The workflow handles the version bump commit, tarball, release
 notes, and Flatpak bundle automatically.
+
+---
+
+## Making a release
+
+Cutting a release requires **one manual step** — everything else is automated.
+
+### Step 1 — Update `CHANGELOG.md` (manual)
+
+Add a new section at the top of `CHANGELOG.md` for the version you are
+releasing. The release workflow reads this section to generate the GitHub
+Release body and the AppStream `<description>` in `metainfo.xml`.
+
+```markdown
+## [1.2.3] - YYYY-MM-DD
+
+Optional introductory paragraph.
+
+### Fixed
+- Short description of a bug fix.
+- Another fix.
+
+### Changed
+- What changed and why.
+```
+
+Rules:
+- The heading must be exactly `## [X.Y.Z]` (with optional ` - date` suffix).
+- Use `### Section` sub-headings and `- bullet` items for structured output.
+- Inline markdown (`` `code` ``, `**bold**`) is stripped automatically when
+  converting to AppStream XML.
+- Do **not** add a `<release>` entry to `metainfo.xml` manually — the workflow
+  injects it from CHANGELOG.md.
+
+### Step 2 — Push the tag (triggers everything else)
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The `release.yml` workflow then runs three jobs automatically:
+
+| Job | What it does |
+|---|---|
+| `version-bump` | Patches `_BASE_VERSION` in `main.py`, injects `<release>` into `metainfo.xml` from CHANGELOG.md, commits and re-tags |
+| `release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
+| `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle, attaches to Release |
+
+### Step 3 — Flathub publish (manual, if applicable)
+
+The workflow builds the Flatpak bundle but does **not** push to Flathub.
+After the GitHub Release is created you need to update the manifest in the
+Flathub repository:
+
+- **Existing app** — open a PR in `github.com/flathub/io.github.todevelopers.GseProfiler`
+  updating the source URL and sha256 to match the new release tarball.
+- **New submission** — open a new-app request at `github.com/flathub/flathub`
+  with the updated manifest.
+
+Run **Actions → Flathub lint → Run workflow** to validate the manifest before
+submitting.
 
 ---
 

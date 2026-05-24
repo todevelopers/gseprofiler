@@ -34,8 +34,70 @@ jobs:
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           DATE=$(date -u +%Y-%m-%d)
-          sed -i "s|<releases>|<releases>\n    <release version=\"${VERSION}\" date=\"${DATE}\"/>|" \
-            data/io.github.todevelopers.GseProfiler.metainfo.xml
+          VERSION="$VERSION" DATE="$DATE" python3 - <<'PYEOF'
+          import os, re
+
+          VERSION = os.environ['VERSION']
+          DATE    = os.environ['DATE']
+
+          with open('CHANGELOG.md', encoding='utf-8') as f:
+              content = f.read()
+
+          # Extract the ## [VERSION] section (everything up to next ## [ heading)
+          pattern = rf'^## \[{re.escape(VERSION)}\][^\n]*\n(.*?)(?=^## \[|\Z)'
+          m = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+
+          def clean(text):
+              """Strip markdown inline markup so AppStream gets plain text."""
+              text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+              text = re.sub(r'\*(.+?)\*',     r'\1', text)
+              text = re.sub(r'`(.+?)`',       r'\1', text)
+              return text.strip()
+
+          def flush_items(items, parts):
+              if items:
+                  parts.append('        <ul>')
+                  for it in items:
+                      parts.append(f'          <li>{clean(it)}</li>')
+                  parts.append('        </ul>')
+              return []
+
+          if not m:
+              entry = f'    <release version="{VERSION}" date="{DATE}"/>'
+          else:
+              parts, items = [], []
+              for line in m.group(1).split('\n'):
+                  line = line.rstrip()
+                  if line.startswith('### '):
+                      items = flush_items(items, parts)
+                      parts.append(f'        <p>{line[4:].strip()}:</p>')
+                  elif line.startswith(('- ', '* ')):
+                      items.append(line[2:])
+                  elif line and not line.startswith('#'):
+                      items = flush_items(items, parts)
+                      parts.append(f'        <p>{clean(line)}</p>')
+              flush_items(items, parts)
+
+              if not parts:
+                  entry = f'    <release version="{VERSION}" date="{DATE}"/>'
+              else:
+                  desc = '\n'.join(['      <description>'] + parts + ['      </description>'])
+                  entry = (
+                      f'    <release version="{VERSION}" date="{DATE}">\n'
+                      f'{desc}\n'
+                      f'    </release>'
+                  )
+
+          with open('data/io.github.todevelopers.GseProfiler.metainfo.xml', encoding='utf-8') as f:
+              xml_doc = f.read()
+
+          xml_doc = xml_doc.replace('<releases>', f'<releases>\n{entry}', 1)
+
+          with open('data/io.github.todevelopers.GseProfiler.metainfo.xml', 'w', encoding='utf-8') as f:
+              f.write(xml_doc)
+
+          print(f'Injected release {VERSION} ({DATE})')
+          PYEOF
 
       - name: Commit and re-tag
         id: push
