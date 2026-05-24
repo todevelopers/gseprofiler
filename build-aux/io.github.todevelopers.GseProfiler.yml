@@ -10,8 +10,18 @@ finish-args:
   - --socket=wayland
   - --talk-name=org.gnome.Shell
   - --talk-name=org.gnome.Shell.Extensions
-  # Read systemd journal directly (replaces flatpak-spawn --host journalctl)
+  # Read systemd journal directly (replaces flatpak-spawn --host journalctl).
+  # This app is a GNOME Shell extension debugger/profiler whose core purpose is
+  # to show extension logs to the developer. Read-only access to both the
+  # volatile (/run/log/journal) and persistent (/var/log/journal) journal
+  # locations is required: on systems with persistent journaling enabled
+  # (the default on Fedora, Arch, and most GNOME distros) current-boot logs
+  # live exclusively under /var/log/journal — /run/log/journal alone is empty
+  # and the log viewer shows nothing. Access is strictly :ro and limited to
+  # the journal subtree; no other parts of /var or /run are exposed. Same
+  # pattern is used by GNOME Logs and other journal-viewer applications.
   - --filesystem=/run/log/journal:ro
+  - --filesystem=/var/log/journal:ro
   # Bridge extension install path
   - --filesystem=~/.local/share/gnome-shell/extensions:create
   # Unix socket shared with the bridge extension running in gnome-shell.
