@@ -12,7 +12,6 @@ finish-args:
   - --talk-name=org.gnome.Shell.Extensions
   # Read systemd journal directly (replaces flatpak-spawn --host journalctl)
   - --filesystem=/run/log/journal:ro
-  - --filesystem=/var/log/journal:ro
   # Bridge extension install path
   - --filesystem=~/.local/share/gnome-shell/extensions:create
   # Unix socket shared with the bridge extension running in gnome-shell.

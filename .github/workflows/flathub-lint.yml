@@ -42,6 +42,8 @@ jobs:
             --disable-rofiles-fuse \
             --force-clean \
             --repo=repo \
+            --mirror-screenshots-url=https://dl.flathub.org/media \
+            --compose-url-policy=full \
             flatpak_app \
             build-aux/io.github.todevelopers.GseProfiler.yml
 
