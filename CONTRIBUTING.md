@@ -13,35 +13,43 @@ expect before opening a pull request.
 - [Bridge hash](#bridge-hash)
 - [Scripts reference](#scripts-reference)
 - [GitHub Actions workflows](#github-actions-workflows)
-- [Release process](#release-process)
 - [Pull request checklist](#pull-request-checklist)
 
 ---
 
 ## Development setup
 
+### 1. Clone
+
 ```bash
 git clone https://github.com/todevelopers/gse-profiler.git
 cd gse-profiler
+```
 
-# System dependencies (Fedora / RHEL)
+### 2. Install system dependencies
+
+```bash
+# Fedora / RHEL
 sudo dnf install python3-gobject gtk4 libadwaita
 
-# System dependencies (Ubuntu / Debian 24.04+)
+# Ubuntu / Debian (24.04+)
 sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+```
 
-# Python dev tools
+### 3. Install dev tools
+
+```bash
 pip install ruff mypy pytest
-
-# Node / JS dev tools
 npm install        # installs eslint and config from package.json
 ```
 
-Run the app:
+### 4. Run
 
 ```bash
 python3 -m app.main
 ```
+
+On first launch the app will offer to install the bridge extension and restart GNOME Shell.
 
 ---
 
@@ -182,6 +190,24 @@ changes.
 
 ---
 
+### Flathub lint (`flathub-lint.yml`)
+
+**Triggers:** manual only — run it from **Actions → Flathub lint → Run workflow**.
+
+Runs `flatpak-builder-lint` (via `org.flatpak.Builder`) against both the
+manifest and the built repo:
+
+1. Installs `flatpak`, `flatpak-builder`, and `org.flatpak.Builder` from Flathub.
+2. **Manifest lint** — validates `build-aux/io.github.todevelopers.GseProfiler.yml`
+   against Flathub submission rules.
+3. Installs the GNOME 50 runtime / SDK and builds the Flatpak into a local `repo/`.
+4. **Repo lint** — validates the built repo against Flathub submission rules.
+
+Use this before opening a Flathub submission PR to check for issues. The lint
+output is visible in the job log even when there are known exceptions pending.
+
+---
+
 ### Release (`release.yml`)
 
 **Triggers:** any tag matching `v*` (e.g. `v1.2.0`, `v2.0.0-beta.1`).
@@ -203,8 +229,7 @@ The workflow runs three jobs in sequence:
 #### 2. `release` job (needs `version-bump`)
 
 1. Checks out the commit produced by `version-bump`.
-2. Builds a source tarball using `git archive`:
-   `gse-profiler-X.Y.Z.tar.gz`
+2. Builds a source tarball using `git archive`: `gse-profiler-X.Y.Z.tar.gz`
 3. Extracts release notes from `CHANGELOG.md`:
    - Looks for a `## [X.Y.Z]` section and copies everything up to the next
      `## [` heading.
@@ -215,18 +240,16 @@ The workflow runs three jobs in sequence:
    - The source tarball as a release asset.
    - `prerelease: true` if the tag name contains a `-` (e.g. `-beta`, `-rc`).
 
-#### 3. `flatpak` job (needs `version-bump`)
+#### 3. `flatpak` job (needs `version-bump`, `release`)
 
 1. Checks out the commit produced by `version-bump`.
-2. Installs `flatpak`, `flatpak-builder`, and the GNOME 50 runtime / SDK from
-   Flathub.
-3. Injects a `<release version="X.Y.Z" date="YYYY-MM-DD"/>` entry into
-   `data/io.github.todevelopers.GseProfiler.metainfo.xml`.
-4. Builds the Flatpak bundle using the manifest in
-   `build-aux/io.github.todevelopers.GseProfiler.yml`:
-   `gse-profiler-X.Y.Z-x86_64.flatpak`
-5. Attaches the `.flatpak` file to the GitHub Release created by the `release`
-   job.
+2. Updates the manifest source URL and `sha256` to match the new release tarball.
+3. Commits the updated manifest back to `main`.
+4. Installs `flatpak`, `flatpak-builder`, and the GNOME 50 runtime / SDK from Flathub.
+5. Builds the Flatpak bundle: `gse-profiler-X.Y.Z-x86_64.flatpak`
+6. Runs `flatpak-builder-lint` against the manifest and the built repo
+   (non-blocking — lint output is visible in logs).
+7. Attaches the `.flatpak` bundle to the GitHub Release.
 
 **How to cut a release:**
 

@@ -172,36 +172,6 @@ on your system is touched.
 
 ---
 
-## Manual installation (development)
-
-### 1. Clone
-
-```bash
-git clone https://github.com/todevelopers/gse-profiler.git
-cd gse-profiler
-```
-
-### 2. Install system dependencies
-
-```bash
-# Fedora / RHEL
-sudo dnf install python3-gobject gtk4 libadwaita
-
-# Ubuntu / Debian (24.04+)
-sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
-```
-
-### 3. Run
-
-```bash
-python3 -m app.main
-```
-
-On first launch the app will offer to install the bridge extension and
-restart GNOME Shell.
-
----
-
 ## Project Structure
 
 ```
