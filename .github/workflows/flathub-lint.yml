@@ -123,10 +123,17 @@ jobs:
             [ -n "$msg" ] && echo "" && echo "> $msg"
           }
 
-          {
+          output=$(
             echo "# Flathub Lint Results"
             echo ""
             format_lint "Manifest" manifest-lint.json
             echo ""
             format_lint "Repo" repo-lint.json
-          } >> "$GITHUB_STEP_SUMMARY"
+          )
+
+          echo "$output" >> "$GITHUB_STEP_SUMMARY"
+          echo "$output"
+
+          echo "--- raw JSON ---"
+          echo "manifest-lint.json:"; cat manifest-lint.json 2>/dev/null || echo "(not found)"
+          echo "repo-lint.json:";    cat repo-lint.json    2>/dev/null || echo "(not found)"
