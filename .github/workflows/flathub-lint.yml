@@ -1,0 +1,132 @@
+name: Flathub lint
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: flatpak-builder-lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flatpak
+        run: sudo apt-get update -y && sudo apt-get install -y flatpak
+
+      - name: Add Flathub remote
+        run: flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install org.flatpak.Builder
+        run: flatpak --user install -y flathub org.flatpak.Builder
+
+      # ── Manifest lint ─────────────────────────────────────────────────────────
+      - name: Lint manifest
+        continue-on-error: true
+        run: |
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+            manifest build-aux/io.github.todevelopers.GseProfiler.yml \
+            > manifest-lint.json 2>&1 || true
+
+      # ── Build repo ────────────────────────────────────────────────────────────
+      - name: Install flatpak-builder and GNOME runtime
+        run: |
+          sudo apt-get install -y flatpak-builder
+          flatpak --user install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
+
+      - name: Build repo for lint
+        id: build-repo
+        continue-on-error: true
+        run: |
+          flatpak-builder \
+            --disable-rofiles-fuse \
+            --force-clean \
+            --repo=repo \
+            flatpak_app \
+            build-aux/io.github.todevelopers.GseProfiler.yml
+
+      # ── Repo lint ─────────────────────────────────────────────────────────────
+      - name: Lint repo
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -d repo ]; then
+            flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo \
+              > repo-lint.json 2>&1 || true
+          else
+            echo '{"errors":["build-failed"],"warnings":[],"info":["build-failed: repo directory not available — build step failed"]}' \
+              > repo-lint.json
+          fi
+
+      # ── Summary ───────────────────────────────────────────────────────────────
+      - name: Generate job summary
+        if: always()
+        run: |
+          format_lint() {
+            local title="$1"
+            local file="$2"
+
+            echo "## $title"
+
+            if [ ! -f "$file" ]; then
+              echo "> ⚠️ Lint did not run."
+              return
+            fi
+
+            if ! jq empty "$file" 2>/dev/null; then
+              echo "> ⚠️ Could not parse lint output:"
+              echo '```'
+              cat "$file"
+              echo '```'
+              return
+            fi
+
+            error_count=$(jq '.errors // [] | length' "$file")
+            warning_count=$(jq '.warnings // [] | length' "$file")
+
+            if [ "$error_count" -eq 0 ] && [ "$warning_count" -eq 0 ]; then
+              echo "✅ **No issues found.**"
+            else
+              [ "$error_count"   -gt 0 ] && echo "❌ **$error_count error(s)**"
+              [ "$warning_count" -gt 0 ] && echo "⚠️ **$warning_count warning(s)**"
+            fi
+
+            if [ "$error_count" -gt 0 ]; then
+              echo ""
+              echo "### Errors"
+              echo "| Code | Detail |"
+              echo "| ---- | ------ |"
+              jq -r '
+                . as $root |
+                .errors[] |
+                . as $code |
+                ($root.info // [] | map(select(startswith($code + ":"))) | first // "") as $detail |
+                "| `\($code)` | \($detail) |"
+              ' "$file"
+            fi
+
+            if [ "$warning_count" -gt 0 ]; then
+              echo ""
+              echo "### Warnings"
+              echo "| Code | Detail |"
+              echo "| ---- | ------ |"
+              jq -r '
+                . as $root |
+                .warnings[] |
+                . as $code |
+                ($root.info // [] | map(select(startswith($code + ":"))) | first // "") as $detail |
+                "| `\($code)` | \($detail) |"
+              ' "$file"
+            fi
+
+            msg=$(jq -r '.message // ""' "$file")
+            [ -n "$msg" ] && echo "" && echo "> $msg"
+          }
+
+          {
+            echo "# Flathub Lint Results"
+            echo ""
+            format_lint "Manifest" manifest-lint.json
+            echo ""
+            format_lint "Repo" repo-lint.json
+          } >> "$GITHUB_STEP_SUMMARY"
