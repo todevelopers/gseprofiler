@@ -225,6 +225,51 @@ placement, and interaction timing.
 
 ---
 
+## Release Process
+
+**One manual step, everything else automated.**
+
+### Step 1 — CHANGELOG.md (manual, always first)
+
+Add a `## [X.Y.Z]` section at the top of `CHANGELOG.md`. Use `### Fixed` /
+`### Changed` / `### Added` sub-headings with `- bullet` items.
+
+> **IMPORTANT for the agent:** Before writing anything to `CHANGELOG.md`,
+> always show the user a preview of the exact text to be written and wait
+> for explicit confirmation before proceeding.
+
+The release workflow reads this section to produce:
+- The GitHub Release body
+- The AppStream `<release><description>` in `metainfo.xml` (auto-converted
+  from Markdown: `### Heading` → `<p>`, `- item` → `<ul><li>`, inline
+  markup stripped)
+
+Do **not** manually add a `<release>` entry to `metainfo.xml` — the
+workflow injects it from CHANGELOG.md automatically.
+
+### Step 2 — Push tag (triggers full automation)
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+`release.yml` then runs three jobs automatically:
+
+| Job | What it does |
+|---|---|
+| `version-bump` | Patches `_BASE_VERSION` in `main.py`, injects `<release>` into `metainfo.xml`, commits + re-tags |
+| `release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
+| `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle, attaches to Release |
+
+### Step 3 — Flathub (manual, separate)
+
+After the GitHub Release exists, open a PR in
+`github.com/flathub/io.github.todevelopers.GseProfiler` with the updated
+manifest URL + sha256. Run **Actions → Flathub lint** first to catch issues.
+
+---
+
 ## Key Rules for the Agent
 
 1. **Never block the GTK main loop** — all I/O must be async or run in a thread.
@@ -233,3 +278,4 @@ placement, and interaction timing.
 4. **Bridge lifecycle** — always call `disable()` cleanup: disconnect signals, close socket, remove monkey-patches.
 5. **Tests live in `tests/`** — use `pytest`; mock D-Bus and subprocess in unit tests.
 6. **Checks run automatically** — the Stop hook runs `ruff check`, syntax check, WSL headless tests, and `pytest` after every response. Do not report work as done if the hook is still failing.
+7. **CHANGELOG.md — always preview first** — before writing any content to `CHANGELOG.md`, show the user the exact text to be written and wait for explicit approval.
