@@ -307,13 +307,13 @@ separate remotes:
 Users add one or both:
 
 ```bash
-flatpak remote-add --no-gpg-verify todevelopers \
+flatpak remote-add todevelopers \
   https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
 flatpak install todevelopers io.github.todevelopers.GseProfiler
 ```
 
-GPG signing is currently disabled (`--no-gpg-verify`) — add it later when
-external users start installing.
+Builds are GPG-signed; the `.flatpakrepo` file embeds the public key so
+`--no-gpg-verify` is no longer needed.
 
 ---
 
