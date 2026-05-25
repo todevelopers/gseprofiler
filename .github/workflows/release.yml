@@ -6,13 +6,71 @@ on:
       - "v*"
 
 jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Classify the tag as stable (v1.2.3) or prerelease (v1.2.3-rc1, -beta, etc.)
+  # ───────────────────────────────────────────────────────────────────────────
+  detect:
+    name: Detect release type
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.classify.outputs.version }}
+      is_stable: ${{ steps.classify.outputs.is_stable }}
+      flatpak_branch: ${{ steps.classify.outputs.flatpak_branch }}
+
+    steps:
+      - name: Classify tag
+        id: classify
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            IS_STABLE=true
+            BRANCH=stable
+          else
+            IS_STABLE=false
+            BRANCH=testing
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_stable=${IS_STABLE}" >> "$GITHUB_OUTPUT"
+          echo "flatpak_branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Tag ${GITHUB_REF_NAME} → version=${VERSION}, stable=${IS_STABLE}, branch=${BRANCH}"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Guard against accidental re-publish of an existing stable release.
+  # If v1.2.3 already has a GitHub Release, refuse to proceed.
+  # ───────────────────────────────────────────────────────────────────────────
+  guard-stable:
+    name: Guard against duplicate stable release
+    if: needs.detect.outputs.is_stable == 'true'
+    needs: detect
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check if GitHub Release already exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.detect.outputs.version }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json id >/dev/null 2>&1; then
+            echo "::error::Stable release $TAG already exists on GitHub."
+            echo "::error::Use a prerelease tag (e.g. v${{ needs.detect.outputs.version }}-rc1) to re-build,"
+            echo "::error::or delete the GitHub Release manually if you really want to re-publish."
+            exit 1
+          else
+            echo "No existing release for $TAG — proceeding."
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STABLE PATH ONLY: bump _BASE_VERSION + inject metainfo release entry,
+  # commit + re-tag at the new commit.
+  # ───────────────────────────────────────────────────────────────────────────
   version-bump:
-    name: Bump version in source
+    name: Bump version in source (stable only)
+    if: needs.detect.outputs.is_stable == 'true'
+    needs: [detect, guard-stable]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.vars.outputs.version }}
       sha: ${{ steps.push.outputs.sha }}
 
     steps:
@@ -22,17 +80,13 @@ jobs:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
-        id: vars
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Patch _BASE_VERSION in main.py
         run: |
-          sed -i 's/_BASE_VERSION = ".*"/_BASE_VERSION = "${{ steps.vars.outputs.version }}"/' app/main.py
+          sed -i 's/_BASE_VERSION = ".*"/_BASE_VERSION = "${{ needs.detect.outputs.version }}"/' app/main.py
 
       - name: Inject release entry into metainfo.xml
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.detect.outputs.version }}"
           DATE=$(date -u +%Y-%m-%d)
           VERSION="$VERSION" DATE="$DATE" python3 - <<'PYEOF'
           import os, re
@@ -43,12 +97,10 @@ jobs:
           with open('CHANGELOG.md', encoding='utf-8') as f:
               content = f.read()
 
-          # Extract the ## [VERSION] section (everything up to next ## [ heading)
           pattern = rf'^## \[{re.escape(VERSION)}\][^\n]*\n(.*?)(?=^## \[|\Z)'
           m = re.search(pattern, content, re.MULTILINE | re.DOTALL)
 
           def clean(text):
-              """Strip markdown inline markup so AppStream gets plain text."""
               text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
               text = re.sub(r'\*(.+?)\*',     r'\1', text)
               text = re.sub(r'`(.+?)`',       r'\1', text)
@@ -109,17 +161,21 @@ jobs:
           if git diff --cached --quiet; then
             echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           else
-            git commit -m "chore: bump version to ${{ steps.vars.outputs.version }} [skip ci]"
+            git commit -m "chore: bump version to ${{ needs.detect.outputs.version }} [skip ci]"
             git push origin main
             git tag -f "$GITHUB_REF_NAME" HEAD
             git push -f origin "$GITHUB_REF_NAME"
             echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
-  release:
-    name: Create GitHub Release
+  # ───────────────────────────────────────────────────────────────────────────
+  # STABLE PATH ONLY: build source tarball + create GitHub Release.
+  # ───────────────────────────────────────────────────────────────────────────
+  github-release:
+    name: Create GitHub Release (stable only)
+    if: needs.detect.outputs.is_stable == 'true'
+    needs: [detect, version-bump]
     runs-on: ubuntu-latest
-    needs: version-bump
     permissions:
       contents: write
     outputs:
@@ -134,20 +190,18 @@ jobs:
       - name: Build source tarball
         id: tarball
         run: |
-          VERSION="${{ needs.version-bump.outputs.version }}"
+          VERSION="${{ needs.detect.outputs.version }}"
           git archive --format=tar.gz \
             --prefix="gseprofiler-${VERSION}/" \
             -o "gseprofiler-${VERSION}.tar.gz" \
             HEAD
           SHA256=$(sha256sum "gseprofiler-${VERSION}.tar.gz" | awk '{print $1}')
           echo "TARBALL=gseprofiler-${VERSION}.tar.gz" >> "$GITHUB_ENV"
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Extract release notes from CHANGELOG.md
         run: |
-          VERSION="${{ needs.version-bump.outputs.version }}"
-          # Pull the section for this version: from "## [VERSION]" up to (but not including) the next "## [" heading.
+          VERSION="${{ needs.detect.outputs.version }}"
           if [[ -f CHANGELOG.md ]] && grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
             awk -v ver="${VERSION}" '
               $0 ~ "^## \\[" ver "\\]" { found=1; next }
@@ -155,7 +209,6 @@ jobs:
               found { print }
             ' CHANGELOG.md > CHANGELOG.txt
           else
-            # Fallback: commit list since previous tag
             PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
             if [[ -n "$PREV_TAG" ]]; then
               git log --oneline "${PREV_TAG}..HEAD" > CHANGELOG.txt
@@ -167,17 +220,32 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ needs.version-bump.outputs.version }}"
-          name: "GSE Profiler ${{ needs.version-bump.outputs.version }}"
+          tag_name: "v${{ needs.detect.outputs.version }}"
+          name: "GSE Profiler ${{ needs.detect.outputs.version }}"
           body_path: CHANGELOG.txt
           files: ${{ env.TARBALL }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: false
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # BOTH PATHS: build Flatpak and publish to todevelopers/flatpaks remote.
+  # Uses different OSTree branch (stable vs testing) and only attaches
+  # bundle to GitHub Release for stable.
+  # ───────────────────────────────────────────────────────────────────────────
   flatpak:
-    name: Build Flatpak
+    name: Build & Publish Flatpak
+    needs: [detect, version-bump, github-release]
+    if: |
+      always() &&
+      needs.detect.result == 'success' &&
+      (
+        (needs.detect.outputs.is_stable == 'true' &&
+         needs.version-bump.result == 'success' &&
+         needs.github-release.result == 'success')
+        ||
+        needs.detect.outputs.is_stable == 'false'
+      )
     runs-on: ubuntu-latest
-    needs: [version-bump, release]
     permissions:
       contents: write
 
@@ -185,13 +253,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ needs.version-bump.outputs.sha || github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update Flatpak manifest source URL and sha256
+      # ── STABLE ONLY: update manifest sha256 to match new tarball ─────────
+      - name: Update Flatpak manifest source URL and sha256 (stable only)
+        if: needs.detect.outputs.is_stable == 'true'
         run: |
-          export VERSION="${{ needs.version-bump.outputs.version }}"
-          export SHA256="${{ needs.release.outputs.sha256 }}"
+          export VERSION="${{ needs.detect.outputs.version }}"
+          export SHA256="${{ needs.github-release.outputs.sha256 }}"
           python3 - <<'PYEOF'
           import re, os
           VERSION  = os.environ['VERSION']
@@ -214,42 +284,230 @@ jobs:
           print(f'Updated manifest to v{VERSION} sha256={SHA256[:12]}...')
           PYEOF
 
-      - name: Commit manifest update
+      - name: Commit manifest update (stable only)
+        if: needs.detect.outputs.is_stable == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet build-aux/io.github.todevelopers.GseProfiler.yml; then
             git add build-aux/io.github.todevelopers.GseProfiler.yml
-            git commit -m "chore: update Flatpak manifest to v${{ needs.version-bump.outputs.version }} [skip ci]"
+            git commit -m "chore: update Flatpak manifest to v${{ needs.detect.outputs.version }} [skip ci]"
             git push origin main
           fi
 
-      - name: Install flatpak and flatpak-builder
+      # ── PRERELEASE ONLY: patch _BASE_VERSION so installed app reports the
+      # correct version (e.g. "1.0.2-rc1") instead of the previous stable.
+      # This change is NOT committed back — it only lives in the build env.
+      - name: Patch _BASE_VERSION (prerelease only)
+        if: needs.detect.outputs.is_stable == 'false'
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          VERSION="${{ needs.detect.outputs.version }}+${SHA}"
+          sed -i "s/_BASE_VERSION = \".*\"/_BASE_VERSION = \"${VERSION}\"/" app/main.py
+          grep '_BASE_VERSION' app/main.py
+
+      # ── PRERELEASE ONLY: rewrite gse-profiler source to local checkout ───
+      # The committed manifest points to a previous stable's tarball — for
+      # testing builds we want to build whatever is in the tagged commit.
+      - name: Override gse-profiler source to local checkout (prerelease only)
+        if: needs.detect.outputs.is_stable == 'false'
+        run: |
+          python3 - <<'PYEOF'
+          import re
+          manifest = 'build-aux/io.github.todevelopers.GseProfiler.yml'
+          with open(manifest) as f:
+              content = f.read()
+          # Replace the entire `sources:` block of the gse-profiler module
+          # with a single `dir` source pointing to the repo root. We assume
+          # the gse-profiler module's sources block ends the file (current
+          # layout) — match from "  - name: gse-profiler" onward.
+          new_sources = (
+              '    sources:\n'
+              '      - type: dir\n'
+              '        path: ..\n'
+          )
+          content = re.sub(
+              r'(  - name: gse-profiler\n(?:.*\n)*?)    sources:\n(?:      .*\n)+',
+              lambda m: m.group(1) + new_sources,
+              content,
+          )
+          with open(manifest, 'w') as f:
+              f.write(content)
+          print('Patched manifest: gse-profiler now builds from local checkout')
+          PYEOF
+
+      # ── Common build setup ───────────────────────────────────────────────
+      - name: Install flatpak, flatpak-builder, ostree
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y flatpak flatpak-builder
+          sudo apt-get install -y flatpak flatpak-builder ostree
 
       - name: Set up Flathub and install GNOME runtime (user)
         run: |
           flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak --user install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
 
-      - name: Build Flatpak bundle
+      - name: Build Flatpak (default-branch=${{ needs.detect.outputs.flatpak_branch }})
         run: |
-          VERSION="${{ needs.version-bump.outputs.version }}"
           flatpak-builder \
             --disable-rofiles-fuse \
             --force-clean \
+            --default-branch=${{ needs.detect.outputs.flatpak_branch }} \
             --repo=repo \
             flatpak_app \
             build-aux/io.github.todevelopers.GseProfiler.yml
+
+      # ── STABLE ONLY: build .flatpak bundle and attach to GitHub Release ──
+      - name: Build .flatpak bundle (stable only)
+        if: needs.detect.outputs.is_stable == 'true'
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
           flatpak build-bundle repo \
             --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
             "gseprofiler-${VERSION}-x86_64.flatpak" \
-            io.github.todevelopers.GseProfiler
+            io.github.todevelopers.GseProfiler \
+            stable
 
-      - name: Attach Flatpak bundle to GitHub Release
+      - name: Attach Flatpak bundle to GitHub Release (stable only)
+        if: needs.detect.outputs.is_stable == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ needs.version-bump.outputs.version }}"
-          files: "gseprofiler-${{ needs.version-bump.outputs.version }}-x86_64.flatpak"
+          tag_name: "v${{ needs.detect.outputs.version }}"
+          files: "gseprofiler-${{ needs.detect.outputs.version }}-x86_64.flatpak"
+
+      # ── BOTH PATHS: publish to todevelopers/flatpaks gh-pages ────────────
+      - name: Checkout todevelopers/flatpaks (gh-pages)
+        uses: actions/checkout@v4
+        with:
+          repository: todevelopers/flatpaks
+          token: ${{ secrets.FLATPAK_REPO_TOKEN }}
+          ref: gh-pages
+          path: flatpaks-pub
+        continue-on-error: true
+
+      - name: Initialize flatpaks repo if missing
+        run: |
+          if [ ! -d flatpaks-pub/.git ]; then
+            mkdir -p flatpaks-pub
+            cd flatpaks-pub
+            git init -b gh-pages
+            git remote add origin "https://x-access-token:${{ secrets.FLATPAK_REPO_TOKEN }}@github.com/todevelopers/flatpaks.git"
+            cd ..
+          fi
+          if [ ! -f flatpaks-pub/repo/config ]; then
+            ostree init --repo=flatpaks-pub/repo --mode=archive-z2
+          fi
+          touch flatpaks-pub/.nojekyll
+
+      - name: Merge new build into shared OSTree repo
+        run: |
+          ostree --repo=flatpaks-pub/repo pull-local repo
+          flatpak build-update-repo flatpaks-pub/repo \
+            --title="todevelopers Flatpaks" \
+            --generate-static-deltas \
+            --prune \
+            --prune-depth=5
+
+      - name: Generate .flatpakrepo, .flatpakref, landing page
+        run: |
+          cat > flatpaks-pub/todevelopers.flatpakrepo <<'EOF'
+          [Flatpak Repo]
+          Title=todevelopers Flatpaks
+          Url=https://todevelopers.github.io/flatpaks/repo/
+          Homepage=https://github.com/todevelopers/flatpaks
+          Description=Flatpak applications by todevelopers
+          NoDeps=false
+          EOF
+
+          # Stable .flatpakref (default for clicks)
+          cat > flatpaks-pub/io.github.todevelopers.GseProfiler.flatpakref <<'EOF'
+          [Flatpak Ref]
+          Name=io.github.todevelopers.GseProfiler
+          Branch=stable
+          Title=GSE Profiler
+          Url=https://todevelopers.github.io/flatpaks/repo/
+          SuggestRemoteName=todevelopers
+          RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
+          IsRuntime=false
+          EOF
+
+          # Testing .flatpakref (for beta testers)
+          cat > flatpaks-pub/io.github.todevelopers.GseProfiler-testing.flatpakref <<'EOF'
+          [Flatpak Ref]
+          Name=io.github.todevelopers.GseProfiler
+          Branch=testing
+          Title=GSE Profiler (testing)
+          Url=https://todevelopers.github.io/flatpaks/repo/
+          SuggestRemoteName=todevelopers
+          RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
+          IsRuntime=false
+          EOF
+
+          cat > flatpaks-pub/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>todevelopers Flatpaks</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#222}
+              h1,h2{border-bottom:1px solid #eee;padding-bottom:.3rem}
+              code,pre{font-family:ui-monospace,Menlo,Consolas,monospace}
+              code{background:#f4f4f4;padding:.1rem .4rem;border-radius:3px}
+              pre{background:#f4f4f4;padding:1rem;border-radius:5px;overflow-x:auto}
+              a{color:#0366d6}
+              .app{padding:1rem;border:1px solid #ddd;border-radius:6px;margin:1rem 0}
+              .app h3{margin-top:0}
+              .badge{display:inline-block;padding:.1rem .5rem;border-radius:10px;font-size:.85em;background:#f0f0f0}
+              .stable{background:#dcf3dc;color:#1a5d1a}
+              .testing{background:#fff3cd;color:#856404}
+            </style>
+          </head>
+          <body>
+            <h1>todevelopers Flatpaks</h1>
+            <p>Self-hosted Flatpak remote for applications by <a href="https://github.com/todevelopers">todevelopers</a>.</p>
+
+            <h2>Add the remote</h2>
+            <p>One-time setup:</p>
+            <pre>flatpak remote-add --if-not-exists --no-gpg-verify todevelopers \
+              https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo</pre>
+
+            <h2>Applications</h2>
+
+            <div class="app">
+              <h3>GSE Profiler</h3>
+              <p>GTK4 desktop application for managing, debugging, and profiling GNOME Shell extensions.</p>
+              <p><a href="https://github.com/todevelopers/gseprofiler">Source on GitHub</a></p>
+
+              <p><span class="badge stable">stable</span> (recommended):</p>
+              <pre>flatpak install todevelopers io.github.todevelopers.GseProfiler</pre>
+              <p>Or click: <a href="io.github.todevelopers.GseProfiler.flatpakref">io.github.todevelopers.GseProfiler.flatpakref</a></p>
+
+              <p><span class="badge testing">testing</span> (latest prerelease):</p>
+              <pre>flatpak install todevelopers io.github.todevelopers.GseProfiler//testing</pre>
+              <p>Or click: <a href="io.github.todevelopers.GseProfiler-testing.flatpakref">io.github.todevelopers.GseProfiler-testing.flatpakref</a></p>
+            </div>
+
+            <h2>Updates</h2>
+            <pre>flatpak update</pre>
+
+            <p style="margin-top:3rem;color:#666;font-size:.9em">
+              Not affiliated with Flathub. Hosted on GitHub Pages.
+            </p>
+          </body>
+          </html>
+          EOF
+
+      - name: Commit and push to flatpaks gh-pages
+        run: |
+          cd flatpaks-pub
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "Publish io.github.todevelopers.GseProfiler v${{ needs.detect.outputs.version }} (${{ needs.detect.outputs.flatpak_branch }})"
+            git push origin gh-pages
+          fi
