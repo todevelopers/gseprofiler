@@ -555,13 +555,13 @@ jobs:
 
             <div class="channel stable">
               <strong>Stable channel</strong> — production-ready releases:
-              <pre>flatpak remote-add --if-not-exists todevelopers \
+              <pre>flatpak remote-add --user --if-not-exists todevelopers \
               https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo</pre>
             </div>
 
             <div class="channel testing">
               <strong>Testing channel</strong> — prerelease builds (rc, beta) for early testing:
-              <pre>flatpak remote-add --if-not-exists todevelopers-testing \
+              <pre>flatpak remote-add --user --if-not-exists todevelopers-testing \
               https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo</pre>
             </div>
 

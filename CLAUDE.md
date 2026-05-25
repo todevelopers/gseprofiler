@@ -301,15 +301,15 @@ separate remotes:
 
 | Remote | URL | Channel |
 |---|---|---|
-| `todevelopers` | `.../todevelopers.flatpakrepo` | stable releases |
+| `todevelopers` | `.../todevelopers.flatpakrepo` | stable releases (not yet available) |
 | `todevelopers-testing` | `.../todevelopers-testing.flatpakrepo` | prereleases (rc/beta) |
 
-Users add one or both:
+Until the first stable release, use the testing remote:
 
 ```bash
-flatpak remote-add todevelopers \
-  https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
-flatpak install todevelopers io.github.todevelopers.GseProfiler
+flatpak remote-add --user todevelopers-testing \
+  https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo
+flatpak install --user todevelopers-testing io.github.todevelopers.GseProfiler
 ```
 
 Builds are GPG-signed; the `.flatpakrepo` file embeds the public key so

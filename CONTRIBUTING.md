@@ -255,16 +255,17 @@ Two separate OSTree repos and two `.flatpakrepo` files mirror Fedora's
 
 | Channel | Remote name | URL |
 |---|---|---|
-| Stable | `todevelopers` | <https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo> |
 | Testing | `todevelopers-testing` | <https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo> |
 
-Users add the remote(s) once and install via the normal flatpak CLI or
+> Stable channel is not yet available — use the testing remote until the first stable release.
+
+Users add the remote once and install via the normal flatpak CLI or
 GNOME Software:
 
 ```bash
-flatpak remote-add todevelopers \
-  https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
-flatpak install todevelopers io.github.todevelopers.GseProfiler
+flatpak remote-add --user todevelopers-testing \
+  https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo
+flatpak install --user todevelopers-testing io.github.todevelopers.GseProfiler
 ```
 
 Builds are GPG-signed; the `.flatpakrepo` file embeds the public key so
