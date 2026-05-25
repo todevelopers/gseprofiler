@@ -306,6 +306,32 @@ jobs:
           sed -i "s/_BASE_VERSION = \".*\"/_BASE_VERSION = \"${VERSION}\"/" app/main.py
           grep '_BASE_VERSION' app/main.py
 
+      - name: Inject prerelease entry into metainfo.xml (prerelease only)
+        if: needs.detect.outputs.is_stable == 'false'
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          SHA=$(git rev-parse --short HEAD)
+          DATE="$DATE" SHA="$SHA" python3 - <<'PYEOF'
+          import os
+          VERSION = os.environ['VERSION']
+          DATE    = os.environ['DATE']
+          SHA     = os.environ['SHA']
+          path    = 'data/io.github.todevelopers.GseProfiler.metainfo.xml'
+          with open(path, encoding='utf-8') as f:
+              xml = f.read()
+          entry = (
+              f'    <release version="{VERSION}+{SHA}" date="{DATE}" type="development">\n'
+              f'      <description><p>Prerelease build from tag v{VERSION}.</p></description>\n'
+              f'    </release>'
+          )
+          xml = xml.replace('<releases>', f'<releases>\n{entry}', 1)
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(xml)
+          print(f'Injected prerelease entry: {VERSION}+{SHA} ({DATE})')
+          PYEOF
+
       # ── PRERELEASE ONLY: rewrite gse-profiler source to local checkout ───
       # The committed manifest points to a previous stable's tarball — for
       # testing builds we want to build whatever is in the tagged commit.
