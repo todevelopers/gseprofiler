@@ -180,17 +180,6 @@ Contains three parallel jobs:
 
 ---
 
-### Bridge Tests (`bridge-test.yml`)
-
-**Triggers:** pushes and pull requests that touch `bridge-extension/**`,
-`.eslintrc.json`, or `package.json`.
-
-Runs a single `lint` job — same ESLint check as the `javascript` job in CI.
-This workflow fires faster than full CI because it is scoped to bridge-only
-changes.
-
----
-
 ### Flathub lint (`flathub-lint.yml`)
 
 **Triggers:** manual only — run it from **Actions → Flathub lint → Run workflow**.
@@ -211,70 +200,89 @@ output is visible in the job log even when there are known exceptions pending.
 
 ### Release (`release.yml`)
 
-**Triggers:** any tag matching `v*` (e.g. `v1.2.0`, `v2.0.0-beta.1`).
+**Triggers:** any tag matching `v*`.
 
-The workflow runs three jobs in sequence:
+The workflow classifies the tag as **stable** or **prerelease** based on its
+shape and runs different jobs accordingly.
 
-#### 1. `version-bump` job
+| Tag shape | Channel |
+|---|---|
+| `v1.2.3` (plain semver) | **stable** |
+| `v1.2.3-rc1`, `v1.2.3-beta`, `v1.2.3-test`, … (semver with suffix) | **prerelease** |
 
-1. Checks out `main` (not the tag commit).
-2. Extracts the version number from the tag name (strips the leading `v`).
-3. Patches `_BASE_VERSION` in `app/main.py` to the new version.
-4. Injects a `<release>` entry into `data/io.github.todevelopers.GseProfiler.metainfo.xml`:
-   - Parses the `## [X.Y.Z]` section from `CHANGELOG.md` and converts it to
-     AppStream XML (`<p>` for paragraphs and section headers, `<ul><li>` for
-     bullet points, inline markup stripped).
-   - Falls back to a bare `<release version="…" date="…"/>` if no CHANGELOG
-     section is found.
-5. Commits both files as `chore: bump version to X.Y.Z [skip ci]`, pushes to
-   `main`, and force-moves the tag to the new commit.
-6. Outputs the final commit SHA for the downstream jobs.
+#### Stable path (`v1.2.3`)
 
-> If `_BASE_VERSION` is already correct (e.g. you patched it manually), the job
-> detects no diff and skips the commit.
+| Job | What it does |
+|---|---|
+| `detect` | Classifies the tag as stable. |
+| `guard-stable` | Refuses if the GitHub Release for this tag already exists — prevents accidental watcher-notification spam from re-running an existing tag. |
+| `version-bump` | Patches `_BASE_VERSION` in `main.py`, injects a `<release>` entry into `metainfo.xml` from CHANGELOG.md, commits both to `main`, and force-moves the tag to the new commit. |
+| `github-release` | Builds the source tarball `gseprofiler-X.Y.Z.tar.gz` and creates the GitHub Release with notes extracted from CHANGELOG.md. |
+| `flatpak` | Updates manifest source URL + `sha256` to point at the new tarball, commits it back to `main`, builds the Flatpak bundle, attaches it to the GitHub Release, and pushes the OSTree commit to `todevelopers/flatpaks` (stable repo). |
 
-#### 2. `release` job (needs `version-bump`)
+#### Prerelease path (`v1.2.3-rc1`)
 
-1. Checks out the commit produced by `version-bump`.
-2. Builds a source tarball using `git archive`: `gse-profiler-X.Y.Z.tar.gz`
-3. Extracts release notes from `CHANGELOG.md`:
-   - Looks for a `## [X.Y.Z]` section and copies everything up to the next
-     `## [` heading.
-   - Falls back to `git log --oneline` from the previous tag if the section is
-     missing.
-4. Creates a GitHub Release with:
-   - The extracted release notes as the body.
-   - The source tarball as a release asset.
-   - `prerelease: true` if the tag name contains a `-` (e.g. `-beta`, `-rc`).
+| Job | What it does |
+|---|---|
+| `detect` | Classifies the tag as prerelease. |
+| `flatpak` | Patches `_BASE_VERSION` to `X.Y.Z-rcN+<short-sha>` **in build env only** (no commit), injects a `type="development"` `<release>` entry into metainfo (also no commit), overrides the `gse-profiler` source in the manifest to a local-directory checkout, builds the Flatpak, and pushes the OSTree commit to `todevelopers/flatpaks` (testing repo). |
 
-#### 3. `flatpak` job (needs `version-bump`, `release`)
+Prerelease builds do **not** modify `main`, do **not** create a GitHub
+Release, and do **not** notify watchers. The committed state of `main`
+stays at the previous stable.
 
-1. Checks out the commit produced by `version-bump`.
-2. Updates the manifest source URL and `sha256` to match the new release tarball.
-3. Commits the updated manifest back to `main`.
-4. Installs `flatpak`, `flatpak-builder`, and the GNOME 50 runtime / SDK from Flathub.
-5. Builds the Flatpak bundle: `gse-profiler-X.Y.Z-x86_64.flatpak`
-6. Runs `flatpak-builder-lint` against the manifest and the built repo
-   (non-blocking — lint output is visible in logs).
-7. Attaches the `.flatpak` bundle to the GitHub Release.
-
-**How to cut a release:**
+**How to cut releases:**
 
 ```bash
+# Production release for everyone
 git tag v1.2.3
 git push origin v1.2.3
+
+# Testing build for early validation
+git tag v1.2.3-rc1
+git push origin v1.2.3-rc1
 ```
 
-That is all. The workflow handles the version bump commit, tarball, release
-notes, and Flatpak bundle automatically.
+### Self-hosted Flatpak remote (`todevelopers/flatpaks`)
+
+The `flatpak` job pushes built OSTree commits to the
+[`todevelopers/flatpaks`](https://github.com/todevelopers/flatpaks)
+repository's `gh-pages` branch, served via GitHub Pages at
+<https://todevelopers.github.io/flatpaks/>.
+
+Two separate OSTree repos and two `.flatpakrepo` files mirror Fedora's
+"Fedora Flatpaks" + "Fedora Flatpaks (testing)" split:
+
+| Channel | Remote name | URL |
+|---|---|---|
+| Stable | `todevelopers` | <https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo> |
+| Testing | `todevelopers-testing` | <https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo> |
+
+Users add the remote(s) once and install via the normal flatpak CLI or
+GNOME Software:
+
+```bash
+flatpak remote-add --no-gpg-verify todevelopers \
+  https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
+flatpak install todevelopers io.github.todevelopers.GseProfiler
+```
+
+GPG signing is not yet enabled, so users must pass `--no-gpg-verify`
+when adding the remote.
 
 ---
 
 ## Making a release
 
-Cutting a release requires **one manual step** — everything else is automated.
+Two channels: **stable** (full release for everyone) and **prerelease** (test
+build, no GitHub Release, no source commits).
 
-### Step 1 — Update `CHANGELOG.md` (manual)
+### Stable release (`v1.2.3`)
+
+Cutting a stable release requires **one manual step** — everything else is
+automated.
+
+#### Step 1 — Update `CHANGELOG.md` (manual)
 
 Add a new section at the top of `CHANGELOG.md` for the version you are
 releasing. The release workflow reads this section to generate the GitHub
@@ -301,34 +309,49 @@ Rules:
 - Do **not** add a `<release>` entry to `metainfo.xml` manually — the workflow
   injects it from CHANGELOG.md.
 
-### Step 2 — Push the tag (triggers everything else)
+#### Step 2 — Push the tag
 
 ```bash
 git tag v1.2.3
 git push origin v1.2.3
 ```
 
-The `release.yml` workflow then runs three jobs automatically:
+The `release.yml` workflow then runs `detect` → `guard-stable` → `version-bump`
+→ `github-release` → `flatpak`. After it completes:
 
-| Job | What it does |
-|---|---|
-| `version-bump` | Patches `_BASE_VERSION` in `main.py`, injects `<release>` into `metainfo.xml` from CHANGELOG.md, commits and re-tags |
-| `release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
-| `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle, attaches to Release |
+- A new GitHub Release `v1.2.3` exists with notes from CHANGELOG.md and the
+  `.flatpak` bundle attached.
+- The OSTree commit is published to `todevelopers/flatpaks` (stable repo).
+- Users get the update via `flatpak update`.
 
-### Step 3 — Flathub publish (manual, if applicable)
+> If a GitHub Release for `v1.2.3` already exists, `guard-stable` refuses to
+> proceed. To re-publish you must delete the existing GitHub Release first.
 
-The workflow builds the Flatpak bundle but does **not** push to Flathub.
-After the GitHub Release is created you need to update the manifest in the
-Flathub repository:
+### Prerelease (`v1.2.3-rc1`, `v1.2.3-beta`, …)
 
-- **Existing app** — open a PR in `github.com/flathub/io.github.todevelopers.GseProfiler`
-  updating the source URL and sha256 to match the new release tarball.
-- **New submission** — open a new-app request at `github.com/flathub/flathub`
-  with the updated manifest.
+Use a prerelease tag to publish a test build to the **testing** Flatpak remote
+without touching `main` or notifying GitHub watchers. The workflow patches
+`_BASE_VERSION` to `X.Y.Z-rcN+<sha>` in-memory and builds from the tagged
+commit's local source.
 
-Run **Actions → Flathub lint → Run workflow** to validate the manifest before
-submitting.
+```bash
+git tag v1.2.3-rc1
+git push origin v1.2.3-rc1
+```
+
+Testers install with:
+
+```bash
+flatpak install todevelopers-testing io.github.todevelopers.GseProfiler
+```
+
+Prerelease tags do **not** require a CHANGELOG.md entry. They can be created
+and deleted freely — there is no GitHub Release to clean up afterwards.
+
+### Flathub publish
+
+This project does **not** submit to Flathub. Distribution is via the
+self-hosted Flatpak remote at <https://todevelopers.github.io/flatpaks/>.
 
 ---
 

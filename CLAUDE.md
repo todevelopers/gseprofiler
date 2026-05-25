@@ -227,9 +227,15 @@ placement, and interaction timing.
 
 ## Release Process
 
-**One manual step, everything else automated.**
+**Two channels: stable (full release) and prerelease (test build).** Tag pattern
+decides which path runs.
 
-### Step 1 — CHANGELOG.md (manual, always first)
+| Tag pattern | Channel | Effect |
+|---|---|---|
+| `v1.2.3` (clean semver) | **stable** | source commits, GitHub Release with notes, `.flatpak` bundle, push to `todevelopers/flatpaks` → **stable** OSTree repo |
+| `v1.2.3-rc1`, `v1.2.3-beta`, `v1.2.3-test`, … | **prerelease** | no source commits, no GitHub Release, push to `todevelopers/flatpaks` → **testing** OSTree repo |
+
+### Step 1 — CHANGELOG.md (manual, stable only)
 
 Add a `## [X.Y.Z]` section at the top of `CHANGELOG.md`. Use `### Fixed` /
 `### Changed` / `### Added` sub-headings with `- bullet` items.
@@ -247,20 +253,67 @@ The release workflow reads this section to produce:
 Do **not** manually add a `<release>` entry to `metainfo.xml` — the
 workflow injects it from CHANGELOG.md automatically.
 
-### Step 2 — Push tag (triggers full automation)
+Skip this step for prerelease tags — they do not generate release notes
+or modify CHANGELOG.
+
+### Step 2 — Push tag
+
+**Stable:**
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git tag v1.2.3
+git push origin v1.2.3
 ```
 
-`release.yml` then runs three jobs automatically:
+`release.yml` runs:
 
 | Job | What it does |
 |---|---|
+| `detect` | Classifies tag as stable |
+| `guard-stable` | Refuses if GitHub Release for this tag already exists (prevents watcher-notification spam from accidental re-runs) |
 | `version-bump` | Patches `_BASE_VERSION` in `main.py`, injects `<release>` into `metainfo.xml`, commits + re-tags |
-| `release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
-| `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle, attaches to Release |
+| `github-release` | Builds source tarball, creates GitHub Release with CHANGELOG notes |
+| `flatpak` | Updates manifest URL + sha256, builds `.flatpak` bundle (attached to Release), pushes to `todevelopers/flatpaks` → stable OSTree repo |
+
+**Prerelease (for testing):**
+
+```bash
+git tag v1.2.3-rc1
+git push origin v1.2.3-rc1
+```
+
+`release.yml` runs:
+
+| Job | What it does |
+|---|---|
+| `detect` | Classifies tag as prerelease |
+| `flatpak` | Patches `_BASE_VERSION` in-memory to `1.2.3-rc1+<short-sha>`, injects a `type="development"` `<release>` entry into metainfo (also in-memory), overrides the gse-profiler source to local checkout, builds Flatpak, pushes to `todevelopers/flatpaks` → testing OSTree repo |
+
+Prerelease builds **do not commit anything back** to `main` and **do not
+create a GitHub Release** — watchers are not notified. The committed
+state of `main` stays at the previous stable.
+
+### Self-hosted Flatpak remote
+
+Builds are published to `todevelopers/flatpaks` (gh-pages branch, served
+via GitHub Pages at https://todevelopers.github.io/flatpaks/). Two
+separate remotes:
+
+| Remote | URL | Channel |
+|---|---|---|
+| `todevelopers` | `.../todevelopers.flatpakrepo` | stable releases |
+| `todevelopers-testing` | `.../todevelopers-testing.flatpakrepo` | prereleases (rc/beta) |
+
+Users add one or both:
+
+```bash
+flatpak remote-add --no-gpg-verify todevelopers \
+  https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
+flatpak install todevelopers io.github.todevelopers.GseProfiler
+```
+
+GPG signing is currently disabled (`--no-gpg-verify`) — add it later when
+external users start installing.
 
 ---
 
