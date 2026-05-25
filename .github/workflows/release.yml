@@ -376,24 +376,27 @@ jobs:
           files: "gseprofiler-${{ needs.detect.outputs.version }}-x86_64.flatpak"
 
       # ── BOTH PATHS: publish to todevelopers/flatpaks gh-pages ────────────
-      - name: Checkout todevelopers/flatpaks (gh-pages)
-        uses: actions/checkout@v4
-        with:
-          repository: todevelopers/flatpaks
-          token: ${{ secrets.FLATPAK_REPO_TOKEN }}
-          ref: gh-pages
-          path: flatpaks-pub
-        continue-on-error: true
-
-      - name: Initialize flatpaks repo if missing
+      - name: Set up flatpaks publish workspace
+        env:
+          FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
         run: |
-          if [ ! -d flatpaks-pub/.git ]; then
-            mkdir -p flatpaks-pub
-            cd flatpaks-pub
-            git init -b gh-pages
-            git remote add origin "https://x-access-token:${{ secrets.FLATPAK_REPO_TOKEN }}@github.com/todevelopers/flatpaks.git"
-            cd ..
+          REMOTE="https://x-access-token:${FLATPAK_REPO_TOKEN}@github.com/todevelopers/flatpaks.git"
+
+          mkdir -p flatpaks-pub
+          cd flatpaks-pub
+          git init -b gh-pages
+          git remote add origin "$REMOTE"
+
+          # Try to fetch existing gh-pages; if missing or empty repo, start fresh.
+          if git fetch origin gh-pages 2>/dev/null; then
+            echo "Found existing gh-pages — checking out"
+            git reset --hard FETCH_HEAD
+          else
+            echo "No existing gh-pages — starting fresh"
           fi
+
+          cd ..
+
           if [ ! -f flatpaks-pub/repo/config ]; then
             ostree init --repo=flatpaks-pub/repo --mode=archive-z2
           fi
