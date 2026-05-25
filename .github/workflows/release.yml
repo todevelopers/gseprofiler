@@ -426,6 +426,9 @@ jobs:
           if [ ! -f flatpaks-pub/repo/config ]; then
             ostree init --repo=flatpaks-pub/repo --mode=archive-z2
           fi
+          # OSTree's build-update-repo enumerates refs/remotes when generating
+          # static deltas — ensure the directory exists even when we have none.
+          mkdir -p flatpaks-pub/repo/refs/remotes
           touch flatpaks-pub/.nojekyll
 
       - name: Merge new build into shared OSTree repo
