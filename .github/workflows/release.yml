@@ -402,6 +402,21 @@ jobs:
           files: "gseprofiler-${{ needs.detect.outputs.version }}-x86_64.flatpak"
 
       # ── BOTH PATHS: publish to todevelopers/flatpaks gh-pages ────────────
+      # Two separate OSTree repos live under one gh-pages branch:
+      #   repo/          → "todevelopers Flatpaks"            (stable)
+      #   repo-testing/  → "todevelopers Flatpaks (testing)"  (prerelease)
+      # Mirrors how Fedora exposes "Fedora Flatpaks" + "Fedora Flatpaks (testing)".
+
+      - name: Determine publish target
+        run: |
+          if [[ "${{ needs.detect.outputs.is_stable }}" == "true" ]]; then
+            echo "PUBLISH_DIR=flatpaks-pub/repo"          >> "$GITHUB_ENV"
+            echo "PUBLISH_TITLE=todevelopers Flatpaks"    >> "$GITHUB_ENV"
+          else
+            echo "PUBLISH_DIR=flatpaks-pub/repo-testing"             >> "$GITHUB_ENV"
+            echo "PUBLISH_TITLE=todevelopers Flatpaks (testing)"     >> "$GITHUB_ENV"
+          fi
+
       - name: Set up flatpaks publish workspace
         env:
           FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
@@ -423,25 +438,27 @@ jobs:
 
           cd ..
 
-          if [ ! -f flatpaks-pub/repo/config ]; then
-            ostree init --repo=flatpaks-pub/repo --mode=archive-z2
+          # Initialize the target OSTree repo if missing
+          if [ ! -f "${PUBLISH_DIR}/config" ]; then
+            ostree init --repo="${PUBLISH_DIR}" --mode=archive-z2
           fi
           # OSTree's build-update-repo enumerates refs/remotes when generating
           # static deltas — ensure the directory exists even when we have none.
-          mkdir -p flatpaks-pub/repo/refs/remotes
+          mkdir -p "${PUBLISH_DIR}/refs/remotes"
           touch flatpaks-pub/.nojekyll
 
-      - name: Merge new build into shared OSTree repo
+      - name: Merge new build into target OSTree repo
         run: |
-          ostree --repo=flatpaks-pub/repo pull-local repo
-          flatpak build-update-repo flatpaks-pub/repo \
-            --title="todevelopers Flatpaks" \
+          ostree --repo="${PUBLISH_DIR}" pull-local repo
+          flatpak build-update-repo "${PUBLISH_DIR}" \
+            --title="${PUBLISH_TITLE}" \
             --generate-static-deltas \
             --prune \
             --prune-depth=5
 
       - name: Generate .flatpakrepo, .flatpakref, landing page
         run: |
+          # ── Stable remote definition ──────────────────────────────────────
           cat > flatpaks-pub/todevelopers.flatpakrepo <<'EOF'
           [Flatpak Repo]
           Title=todevelopers Flatpaks
@@ -451,7 +468,17 @@ jobs:
           NoDeps=false
           EOF
 
-          # Stable .flatpakref (default for clicks)
+          # ── Testing remote definition ─────────────────────────────────────
+          cat > flatpaks-pub/todevelopers-testing.flatpakrepo <<'EOF'
+          [Flatpak Repo]
+          Title=todevelopers Flatpaks (testing)
+          Url=https://todevelopers.github.io/flatpaks/repo-testing/
+          Homepage=https://github.com/todevelopers/flatpaks
+          Description=Prerelease Flatpak applications by todevelopers
+          NoDeps=false
+          EOF
+
+          # ── .flatpakref for one-click install (stable) ────────────────────
           cat > flatpaks-pub/io.github.todevelopers.GseProfiler.flatpakref <<'EOF'
           [Flatpak Ref]
           Name=io.github.todevelopers.GseProfiler
@@ -463,18 +490,19 @@ jobs:
           IsRuntime=false
           EOF
 
-          # Testing .flatpakref (for beta testers)
+          # ── .flatpakref for one-click install (testing) ───────────────────
           cat > flatpaks-pub/io.github.todevelopers.GseProfiler-testing.flatpakref <<'EOF'
           [Flatpak Ref]
           Name=io.github.todevelopers.GseProfiler
           Branch=testing
           Title=GSE Profiler (testing)
-          Url=https://todevelopers.github.io/flatpaks/repo/
-          SuggestRemoteName=todevelopers
+          Url=https://todevelopers.github.io/flatpaks/repo-testing/
+          SuggestRemoteName=todevelopers-testing
           RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
           IsRuntime=false
           EOF
 
+          # ── Landing page ──────────────────────────────────────────────────
           cat > flatpaks-pub/index.html <<'EOF'
           <!DOCTYPE html>
           <html lang="en">
@@ -484,26 +512,36 @@ jobs:
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
               body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#222}
-              h1,h2{border-bottom:1px solid #eee;padding-bottom:.3rem}
+              h1,h2,h3{border-bottom:1px solid #eee;padding-bottom:.3rem}
               code,pre{font-family:ui-monospace,Menlo,Consolas,monospace}
               code{background:#f4f4f4;padding:.1rem .4rem;border-radius:3px}
-              pre{background:#f4f4f4;padding:1rem;border-radius:5px;overflow-x:auto}
+              pre{background:#f4f4f4;padding:1rem;border-radius:5px;overflow-x:auto;font-size:.9em}
               a{color:#0366d6}
               .app{padding:1rem;border:1px solid #ddd;border-radius:6px;margin:1rem 0}
-              .app h3{margin-top:0}
-              .badge{display:inline-block;padding:.1rem .5rem;border-radius:10px;font-size:.85em;background:#f0f0f0}
-              .stable{background:#dcf3dc;color:#1a5d1a}
-              .testing{background:#fff3cd;color:#856404}
+              .app h3{margin-top:0;border:0}
+              .channel{margin:1rem 0;padding:.8rem;border-radius:6px}
+              .stable{background:#f0f9f0;border-left:4px solid #1a5d1a}
+              .testing{background:#fff8e6;border-left:4px solid #856404}
             </style>
           </head>
           <body>
             <h1>todevelopers Flatpaks</h1>
-            <p>Self-hosted Flatpak remote for applications by <a href="https://github.com/todevelopers">todevelopers</a>.</p>
+            <p>Self-hosted Flatpak remotes for applications by <a href="https://github.com/todevelopers">todevelopers</a>.</p>
 
-            <h2>Add the remote</h2>
-            <p>One-time setup:</p>
-            <pre>flatpak remote-add --if-not-exists --no-gpg-verify todevelopers \
+            <h2>Add a remote</h2>
+            <p>Pick one or both. Stable is recommended for most users.</p>
+
+            <div class="channel stable">
+              <strong>Stable channel</strong> — production-ready releases:
+              <pre>flatpak remote-add --if-not-exists --no-gpg-verify todevelopers \
               https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo</pre>
+            </div>
+
+            <div class="channel testing">
+              <strong>Testing channel</strong> — prerelease builds (rc, beta) for early testing:
+              <pre>flatpak remote-add --if-not-exists --no-gpg-verify todevelopers-testing \
+              https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo</pre>
+            </div>
 
             <h2>Applications</h2>
 
@@ -512,13 +550,13 @@ jobs:
               <p>GTK4 desktop application for managing, debugging, and profiling GNOME Shell extensions.</p>
               <p><a href="https://github.com/todevelopers/gseprofiler">Source on GitHub</a></p>
 
-              <p><span class="badge stable">stable</span> (recommended):</p>
+              <p><strong>Install stable:</strong></p>
               <pre>flatpak install todevelopers io.github.todevelopers.GseProfiler</pre>
-              <p>Or click: <a href="io.github.todevelopers.GseProfiler.flatpakref">io.github.todevelopers.GseProfiler.flatpakref</a></p>
+              <p>or click: <a href="io.github.todevelopers.GseProfiler.flatpakref">io.github.todevelopers.GseProfiler.flatpakref</a></p>
 
-              <p><span class="badge testing">testing</span> (latest prerelease):</p>
-              <pre>flatpak install todevelopers io.github.todevelopers.GseProfiler//testing</pre>
-              <p>Or click: <a href="io.github.todevelopers.GseProfiler-testing.flatpakref">io.github.todevelopers.GseProfiler-testing.flatpakref</a></p>
+              <p><strong>Install testing:</strong></p>
+              <pre>flatpak install todevelopers-testing io.github.todevelopers.GseProfiler</pre>
+              <p>or click: <a href="io.github.todevelopers.GseProfiler-testing.flatpakref">io.github.todevelopers.GseProfiler-testing.flatpakref</a></p>
             </div>
 
             <h2>Updates</h2>
