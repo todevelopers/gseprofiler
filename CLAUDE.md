@@ -109,7 +109,7 @@ identically inside and outside Flatpak.
 
 | Interface                    | Purpose                            |
 | ---------------------------- | ---------------------------------- |
-| `org.gnome.Shell.Extensions` | List extensions, enable/disable    |
+| `org.gnome.Shell`            | List extensions, enable/disable (via the `org.gnome.Shell.Extensions` interface) |
 | `org.gnome.SessionManager`   | Logout after bridge install/remove |
 | `org.freedesktop.DBus`       | Introspection                      |
 

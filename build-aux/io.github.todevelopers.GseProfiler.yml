@@ -9,7 +9,9 @@ finish-args:
   - --share=ipc
   - --socket=wayland
   # List, enable, disable and inspect GNOME Shell extensions (core feature).
-  - --talk-name=org.gnome.Shell.Extensions
+  # The well-known D-Bus name for the Extensions service is org.gnome.Shell
+  # itself — the org.gnome.Shell.Extensions interface lives on it.
+  - --talk-name=org.gnome.Shell
   # Log out the session after the bridge extension is installed/removed
   # (GNOME Shell can only pick up new extensions after a full logout on Wayland).
   - --talk-name=org.gnome.SessionManager
