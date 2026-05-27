@@ -200,7 +200,7 @@ gse-profiler/
 ├── build-aux/                  # Flatpak manifest and launcher
 ├── data/                       # .desktop, AppStream metainfo, icons
 ├── docs/                       # architecture diagrams
-├── scripts/                    # setup / uninstall / shell-restart
+├── scripts/                    # setup / uninstall helpers
 └── tests/                      # pytest unit tests
 ```
 

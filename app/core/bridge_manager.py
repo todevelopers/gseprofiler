@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import gi
@@ -11,7 +10,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 from app.core.dbus_client import DBusClient, ExtensionState
 
@@ -34,7 +33,6 @@ class BridgeManager:
     """Manages installation and lifecycle of the bridge GNOME Shell extension."""
 
     def __init__(self, project_root: Path, dbus_client: DBusClient) -> None:
-        self._root = project_root
         self._source = project_root / "bridge-extension"
         self._dbus = dbus_client
 
@@ -235,11 +233,55 @@ class BridgeManager:
             self._restart_shell()
 
     def _restart_shell(self) -> None:
-        script = self._root / "scripts" / "restart-shell.sh"
-        if script.exists():
-            subprocess.Popen(["bash", str(script)])  # noqa: S603
+        wayland = (
+            bool(GLib.getenv("WAYLAND_DISPLAY"))
+            or GLib.getenv("XDG_SESSION_TYPE") == "wayland"
+        )
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except GLib.Error as exc:
+            _log.error("Cannot get session bus: %s", exc.message)
+            return
+
+        if wayland:
+            bus.call(
+                "org.gnome.SessionManager",
+                "/org/gnome/SessionManager",
+                "org.gnome.SessionManager",
+                "Logout",
+                GLib.Variant("(u)", (1,)),
+                None,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                self._on_restart_call_done,
+                "Logout",
+            )
         else:
-            _log.warning("restart-shell.sh not found at %s", script)
+            bus.call(
+                "org.gnome.Shell",
+                "/org/gnome/Shell",
+                "org.gnome.Shell",
+                "Eval",
+                GLib.Variant(
+                    "(s)",
+                    ('Meta.restart("Restarting GNOME Shell for GSE Profiler…")',),
+                ),
+                None,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                self._on_restart_call_done,
+                "Eval",
+            )
+
+    def _on_restart_call_done(
+        self, source: Gio.DBusConnection, result: Gio.AsyncResult, label: str
+    ) -> None:
+        try:
+            source.call_finish(result)
+        except GLib.Error as exc:
+            _log.error("Shell restart D-Bus call (%s) failed: %s", label, exc.message)
 
 
 def _show_error(parent_window: Gtk.Window | None, message: str) -> None:

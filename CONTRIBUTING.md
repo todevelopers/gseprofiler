@@ -125,20 +125,17 @@ curl -fsSL https://raw.githubusercontent.com/todevelopers/gse-profiler/main/scri
 Removes: repository directory, `.desktop` entry, app icon, and the bridge
 GNOME Shell extension from `~/.local/share/gnome-shell/extensions/`.
 
-### `scripts/restart-shell.sh`
+### Shell restart after bridge install/uninstall
 
-Restarts GNOME Shell after the bridge extension is installed or updated.
+Done directly via D-Bus from [`app/core/bridge_manager.py`](app/core/bridge_manager.py):
 
-| Session | Method |
+| Session | D-Bus call |
 |---|---|
-| **Wayland** | `gnome-session-quit --logout --no-prompt` (prompts the user to log back in) |
-| **X11** | `Meta.restart()` via `org.gnome.Shell` D-Bus (restarts in place, no logout) |
+| **Wayland** | `org.gnome.SessionManager.Logout(1)` (no confirmation; user logs back in) |
+| **X11** | `org.gnome.Shell.Eval("Meta.restart(…)")` (restarts in place, no logout) |
 
-When running inside Flatpak on Wayland the script uses `flatpak-spawn --host`
-to call `gnome-session-quit` on the host system.
-
-The app calls this script automatically after installing the bridge; you
-generally do not need to run it by hand.
+This works identically inside and outside Flatpak — no `flatpak-spawn` or
+host shell access required.
 
 ### `scripts/update-bridge-hash.py`
 

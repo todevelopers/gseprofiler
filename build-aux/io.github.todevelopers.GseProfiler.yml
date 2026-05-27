@@ -10,6 +10,8 @@ finish-args:
   - --socket=wayland
   - --talk-name=org.gnome.Shell
   - --talk-name=org.gnome.Shell.Extensions
+  # Used to log out the session on Wayland after bridge install/uninstall.
+  - --talk-name=org.gnome.SessionManager
   # Read systemd journal directly (replaces flatpak-spawn --host journalctl).
   # This app is a GNOME Shell extension debugger/profiler whose core purpose is
   # to show extension logs to the developer. Read-only access to both the
@@ -46,8 +48,6 @@ modules:
     build-commands:
       - mkdir -p /app/share/gse-profiler
       - cp -r app bridge-extension /app/share/gse-profiler/
-      - install -Dm755 scripts/restart-shell.sh
-          /app/share/gse-profiler/scripts/restart-shell.sh
       - install -Dm755 build-aux/gse-profiler.sh /app/bin/gse-profiler
       - install -Dm644 data/io.github.todevelopers.GseProfiler.desktop
           /app/share/applications/io.github.todevelopers.GseProfiler.desktop

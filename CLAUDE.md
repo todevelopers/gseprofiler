@@ -59,8 +59,6 @@ gse-profiler/
 │   └── metadata.json
 ├── api/
 │   └── devtools-api.js         # opt-in developer API
-├── scripts/
-│   └── restart-shell.sh
 └── tests/                      # pytest unit tests
 ```
 
@@ -72,14 +70,17 @@ gse-profiler/
 - **Install path:** `~/.local/share/gnome-shell/extensions/gse-profiler-bridge@todevelopers/`
 - Auto-installed by the app on first launch
 - Shows a minimal status indicator in the GNOME panel (no menu needed in V1)
-- After installation, `scripts/restart-shell.sh` is run to reload gnome-shell
+- After installation, the app triggers a shell restart via D-Bus (see below)
 
 ### Shell Restart Logic
 
-| Session type | Restart method                                    |
-| ------------ | ------------------------------------------------- |
-| X11          | `Meta.restart()` via `org.gnome.Shell Eval` D-Bus |
-| Wayland      | `gnome-session-quit --logout --no-prompt`         |
+Performed directly via session-bus D-Bus calls — works identically inside
+and outside Flatpak, no shell script or `flatpak-spawn` needed.
+
+| Session type | D-Bus call                                                |
+| ------------ | --------------------------------------------------------- |
+| X11          | `org.gnome.Shell.Eval("Meta.restart(…)")`                 |
+| Wayland      | `org.gnome.SessionManager.Logout(1)` (no-confirm logout)  |
 
 ---
 
