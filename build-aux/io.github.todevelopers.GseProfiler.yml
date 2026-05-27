@@ -6,11 +6,9 @@ command: gse-profiler
 
 finish-args:
   - --share=ipc
-  - --socket=fallback-x11
   - --socket=wayland
-  - --talk-name=org.gnome.Shell
   - --talk-name=org.gnome.Shell.Extensions
-  # Used to log out the session on Wayland after bridge install/uninstall.
+  # Used to log out the session after bridge install/uninstall.
   - --talk-name=org.gnome.SessionManager
   # Read systemd journal directly (replaces flatpak-spawn --host journalctl).
   # This app is a GNOME Shell extension debugger/profiler whose core purpose is

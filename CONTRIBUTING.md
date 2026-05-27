@@ -127,12 +127,9 @@ GNOME Shell extension from `~/.local/share/gnome-shell/extensions/`.
 
 ### Shell restart after bridge install/uninstall
 
-Done directly via D-Bus from [`app/core/bridge_manager.py`](app/core/bridge_manager.py):
-
-| Session | D-Bus call |
-|---|---|
-| **Wayland** | `org.gnome.SessionManager.Logout(1)` (no confirmation; user logs back in) |
-| **X11** | `org.gnome.Shell.Eval("Meta.restart(…)")` (restarts in place, no logout) |
+Done directly via D-Bus from [`app/core/bridge_manager.py`](app/core/bridge_manager.py)
+by calling `org.gnome.SessionManager.Logout(1)` (no-confirmation logout).
+Wayland-only — X11 is not supported.
 
 This works identically inside and outside Flatpak — no `flatpak-spawn` or
 host shell access required.

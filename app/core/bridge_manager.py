@@ -191,97 +191,51 @@ class BridgeManager:
         self._prompt_restart(parent_window)
 
     def _prompt_restart(self, parent_window: Gtk.Window | None, *, uninstall: bool = False) -> None:
-        wayland = (
-            bool(GLib.getenv("WAYLAND_DISPLAY"))
-            or GLib.getenv("XDG_SESSION_TYPE") == "wayland"
-        )
         action = "removed" if uninstall else "installed"
-
-        if wayland:
-            body = (
-                f"The bridge extension was {action}.\n\n"
-                "On Wayland, GNOME Shell requires a full logout to reload extensions.\n"
-                "Log out now?"
-            )
-            restart_label = "Log Out"
-            response_key = "restart"
-        elif uninstall:
-            # X11 uninstall: ask before restarting — auto-restart would freeze the
-            # screen without warning.
-            body = (
-                "The bridge extension was removed.\n\n"
-                "GNOME Shell must restart to fully unload it.\n"
-                "Restart now?"
-            )
-            restart_label = "Restart Shell"
-            response_key = "restart"
-        else:
-            # X11 install: restart immediately, no dialog needed.
-            self._restart_shell()
-            return
-
+        body = (
+            f"The bridge extension was {action}.\n\n"
+            "GNOME Shell requires a full logout to reload extensions.\n"
+            "Log out now?"
+        )
         dialog = Adw.AlertDialog.new("Shell Restart Required", body)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response(response_key, restart_label)
-        dialog.set_response_appearance(response_key, Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.connect("response", self._on_restart_response, response_key)
+        dialog.add_response("restart", "Log Out")
+        dialog.set_response_appearance("restart", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.connect("response", self._on_restart_response)
         if parent_window:
             dialog.present(parent_window)
 
-    def _on_restart_response(self, _dialog: Adw.AlertDialog, response: str, restart_key: str) -> None:
-        if response == restart_key:
+    def _on_restart_response(self, _dialog: Adw.AlertDialog, response: str) -> None:
+        if response == "restart":
             self._restart_shell()
 
     def _restart_shell(self) -> None:
-        wayland = (
-            bool(GLib.getenv("WAYLAND_DISPLAY"))
-            or GLib.getenv("XDG_SESSION_TYPE") == "wayland"
-        )
         try:
             bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         except GLib.Error as exc:
             _log.error("Cannot get session bus: %s", exc.message)
             return
 
-        if wayland:
-            bus.call(
-                "org.gnome.SessionManager",
-                "/org/gnome/SessionManager",
-                "org.gnome.SessionManager",
-                "Logout",
-                GLib.Variant("(u)", (1,)),
-                None,
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None,
-                self._on_restart_call_done,
-                "Logout",
-            )
-        else:
-            bus.call(
-                "org.gnome.Shell",
-                "/org/gnome/Shell",
-                "org.gnome.Shell",
-                "Eval",
-                GLib.Variant(
-                    "(s)",
-                    ('Meta.restart("Restarting GNOME Shell for GSE Profiler…")',),
-                ),
-                None,
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None,
-                self._on_restart_call_done,
-                "Eval",
-            )
+        bus.call(
+            "org.gnome.SessionManager",
+            "/org/gnome/SessionManager",
+            "org.gnome.SessionManager",
+            "Logout",
+            GLib.Variant("(u)", (1,)),
+            None,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None,
+            self._on_logout_done,
+        )
 
-    def _on_restart_call_done(
-        self, source: Gio.DBusConnection, result: Gio.AsyncResult, label: str
+    def _on_logout_done(
+        self, source: Gio.DBusConnection, result: Gio.AsyncResult
     ) -> None:
         try:
             source.call_finish(result)
         except GLib.Error as exc:
-            _log.error("Shell restart D-Bus call (%s) failed: %s", label, exc.message)
+            _log.error("SessionManager.Logout failed: %s", exc.message)
 
 
 def _show_error(parent_window: Gtk.Window | None, message: str) -> None:

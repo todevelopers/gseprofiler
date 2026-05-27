@@ -45,10 +45,9 @@ GSE Profiler is split into two parts: a **GTK4 app** (Python) and a **bridge GJS
 runs inside the `gnome-shell` process itself — giving it direct, in-process access to every
 loaded extension's live objects and functions.
 
-GNOME Shell must be restarted once after the bridge is installed:
-
-- **Wayland** — the app prompts you to log out and back in.
-- **X11** — restarted automatically via `Meta.restart()` over D-Bus.
+GNOME Shell must be restarted once after the bridge is installed: the app
+prompts you to log out and back in (Wayland-only — X11 sessions are not
+supported).
 
 The main window shows a live connection indicator so you always know whether the bridge is reachable.
 
@@ -127,7 +126,7 @@ filters out time that belongs to the callee, not the caller.
 
 ## Install
 
-> Requires GNOME Shell 46+ in an active GNOME session (X11 or Wayland).
+> Requires GNOME Shell 46+ in an active **Wayland** GNOME session.
 
 ### Option 1 — Flatpak (recommended)
 

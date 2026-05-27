@@ -5,7 +5,7 @@
 GTK4 desktop application for **managing, debugging, and profiling GNOME Shell extensions**.
 Targets GNOME Shell extension developers. Internally installs a bridge GJS extension that acts as a bridge into the `gnome-shell` process.
 
-**Target platform:** GNOME 48+  
+**Target platform:** GNOME 48+ (Wayland only)
 **Languages:** Python 3.11+ (app), GJS / ES6 (bridge extension + developer API)
 
 ---
@@ -74,13 +74,9 @@ gse-profiler/
 
 ### Shell Restart Logic
 
-Performed directly via session-bus D-Bus calls — works identically inside
-and outside Flatpak, no shell script or `flatpak-spawn` needed.
-
-| Session type | D-Bus call                                                |
-| ------------ | --------------------------------------------------------- |
-| X11          | `org.gnome.Shell.Eval("Meta.restart(…)")`                 |
-| Wayland      | `org.gnome.SessionManager.Logout(1)` (no-confirm logout)  |
+Performed via a single session-bus D-Bus call:
+`org.gnome.SessionManager.Logout(1)` (no-confirm logout). Works
+identically inside and outside Flatpak.
 
 ---
 
@@ -99,7 +95,7 @@ and outside Flatpak, no shell script or `flatpak-spawn` needed.
 - ES6 module syntax (`import` / `export`), strict mode (`'use strict'`)
 - Use GNOME GJS bindings (`imports.gi.*` or `gi://` depending on GNOME version)
 - Always disconnect signals in `disable()` — no memory leaks
-- Never use `org.gnome.Shell Eval` on Wayland — all introspection goes through the socket
+- Never use `org.gnome.Shell.Eval` — all introspection goes through the socket
 
 ### General
 
@@ -111,11 +107,11 @@ and outside Flatpak, no shell script or `flatpak-spawn` needed.
 
 ## D-Bus Interfaces Used
 
-| Interface                    | Purpose                         |
-| ---------------------------- | ------------------------------- |
-| `org.gnome.Shell.Extensions` | List extensions, enable/disable |
-| `org.gnome.Shell`            | Shell eval for X11 restart      |
-| `org.freedesktop.DBus`       | Introspection                   |
+| Interface                    | Purpose                            |
+| ---------------------------- | ---------------------------------- |
+| `org.gnome.Shell.Extensions` | List extensions, enable/disable    |
+| `org.gnome.SessionManager`   | Logout after bridge install/remove |
+| `org.freedesktop.DBus`       | Introspection                      |
 
 ---
 
@@ -321,7 +317,7 @@ Builds are GPG-signed; the `.flatpakrepo` file embeds the public key so
 ## Key Rules for the Agent
 
 1. **Never block the GTK main loop** — all I/O must be async or run in a thread.
-2. **Wayland first** — never assume X11; shell eval path is a fallback, not the default.
+2. **Wayland only** — X11 support was dropped; never use `org.gnome.Shell.Eval` or assume an X server.
 3. **opt-in API must be side-effect free when not connected** — all `DevToolsClient` methods must silently no-op when the bridge socket is unavailable.
 4. **Bridge lifecycle** — always call `disable()` cleanup: disconnect signals, close socket, remove monkey-patches.
 5. **Tests live in `tests/`** — use `pytest`; mock D-Bus and subprocess in unit tests.
