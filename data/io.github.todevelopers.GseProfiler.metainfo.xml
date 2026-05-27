@@ -22,6 +22,14 @@
       <li>Flame graph profiler with per-function highlighting and call table</li>
       <li>Inspector for browsing extension stateObj properties at runtime</li>
     </ul>
+    <p>Why this app needs the listed permissions:</p>
+    <ul>
+      <li>GNOME Shell extensions folder — to install the bridge extension and extensions fetched from GitHub.</li>
+      <li>User runtime folder gse-profiler — Unix socket used by the bridge extension to talk to the app.</li>
+      <li>System journal (read-only) — to show GNOME Shell and extension logs in the built-in log viewer.</li>
+      <li>org.gnome.Shell.Extensions — to list, enable, disable and inspect installed extensions.</li>
+      <li>org.gnome.SessionManager — to log out the session after the bridge is installed or removed, so GNOME Shell picks up the change.</li>
+    </ul>
   </description>
 
   <launchable type="desktop-id">io.github.todevelopers.GseProfiler.desktop</launchable>
