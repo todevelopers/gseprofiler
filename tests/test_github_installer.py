@@ -181,6 +181,55 @@ def test_filter_guard_when_metadata_in_gitignore(tmp_path: Path) -> None:
         _do_extract_install("o", "r", "main", "x", tar, tmp_path)
 
 
+def test_install_compiles_gsettings_schemas(tmp_path: Path) -> None:
+    """Extensions with schemas/*.gschema.xml must end up with gschemas.compiled."""
+    import shutil as _shutil
+
+    from app.core.github_installer import _do_extract_install
+
+    if _shutil.which("glib-compile-schemas") is None:
+        pytest.skip("glib-compile-schemas is not available in this environment")
+
+    schema_xml = (
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<schemalist>\n"
+        "  <schema id='org.example.test' path='/org/example/test/'>\n"
+        "    <key name='enabled' type='b'><default>true</default></key>\n"
+        "  </schema>\n"
+        "</schemalist>\n"
+    )
+    tar = _make_tarball(
+        "repo-schema",
+        {
+            "metadata.json": json.dumps({"uuid": "schemas@ex"}),
+            "extension.js": "// hi",
+            "schemas/org.example.test.gschema.xml": schema_xml,
+        },
+    )
+    _do_extract_install("o", "r", "main", "abc", tar, tmp_path)
+    assert (tmp_path / "schemas@ex" / "schemas" / "gschemas.compiled").is_file()
+
+
+def test_install_fails_on_invalid_schema(tmp_path: Path) -> None:
+    """If a schema is malformed, the install must fail loudly (not silently)."""
+    import shutil as _shutil
+
+    from app.core.github_installer import InstallError, _do_extract_install
+
+    if _shutil.which("glib-compile-schemas") is None:
+        pytest.skip("glib-compile-schemas is not available in this environment")
+
+    tar = _make_tarball(
+        "repo-bad",
+        {
+            "metadata.json": json.dumps({"uuid": "bad@ex"}),
+            "schemas/org.example.bad.gschema.xml": "<not-valid-xml>",
+        },
+    )
+    with pytest.raises(InstallError, match="schemas"):
+        _do_extract_install("o", "r", "main", "abc", tar, tmp_path)
+
+
 def test_update_preserves_installed_at(tmp_path: Path) -> None:
     """Re-installing into an existing target keeps the original installed_at."""
     from app.core.github_installer import SOURCE_KEY, _do_extract_install

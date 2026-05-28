@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -682,6 +683,13 @@ def _do_extract_install(
             encoding="utf-8",
         )
 
+        # Compile GSettings schemas if the extension ships any.  Repos almost
+        # never commit the compiled binary (it lives in their .gitignore);
+        # without it GNOME Shell crashes the extension as soon as it tries
+        # to open a GSettings instance.  Done on the staging copy so a
+        # failure leaves the existing install untouched.
+        _compile_schemas(src_root)
+
         # Move into place (replace existing).
         if target.exists():
             shutil.rmtree(target)
@@ -689,6 +697,53 @@ def _do_extract_install(
         shutil.move(str(src_root), str(target))
         _log.info("Installed %s to %s", uuid, target)
         return uuid
+
+
+def _compile_schemas(extension_root: Path) -> None:
+    """Run ``glib-compile-schemas`` on the extension's ``schemas/`` directory.
+
+    No-op when the extension has no schemas.  Raises :class:`InstallError`
+    when ``schemas/*.gschema.xml`` exists but compilation fails — the
+    extension will not work without ``gschemas.compiled``.
+    """
+    schemas_dir = extension_root / "schemas"
+    if not schemas_dir.is_dir():
+        return
+    if not any(schemas_dir.glob("*.gschema.xml")) and not any(
+        schemas_dir.glob("*.gschema.override")
+    ):
+        # Directory exists but no schemas to compile (e.g. only README).
+        return
+    try:
+        result = subprocess.run(
+            ["glib-compile-schemas", str(schemas_dir)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise InstallError(
+            "glib-compile-schemas is not available — cannot compile "
+            "GSettings schemas for this extension."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise InstallError(
+            "Compiling GSettings schemas timed out."
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise InstallError(
+            "Failed to compile GSettings schemas: "
+            + (detail or f"exit code {result.returncode}")
+        )
+    # glib-compile-schemas exits 0 even when individual files are malformed;
+    # it just prints "Error on line ..." to stderr and skips them.  Surface
+    # those so the developer notices.
+    stderr = (result.stderr or "").strip()
+    if stderr and ("error" in stderr.lower() or "warning" in stderr.lower()):
+        raise InstallError("Failed to compile GSettings schemas: " + stderr)
+    _log.info("Compiled GSettings schemas in %s", schemas_dir)
 
 
 # ─── HTTP error helpers ───────────────────────────────────────────────────
