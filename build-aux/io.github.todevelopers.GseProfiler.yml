@@ -30,6 +30,14 @@ finish-args:
   # talk to the app. :create bind-mounts the whole subdirectory so files
   # created inside are visible on the host (single-file mounts are unreliable).
   - --filesystem=xdg-run/gse-profiler:create
+  # Fetch GNOME Shell extensions from GitHub on user request.  Used to
+  # download tarballs from api.github.com / codeload.github.com and to
+  # query the commits endpoint when checking whether an installed
+  # GitHub-sourced extension has a newer upstream commit.  Network is
+  # not used for telemetry, analytics, or any background traffic — only
+  # for explicit user actions ("Install from GitHub", "Check for
+  # updates") and a one-shot update check at app start.
+  - --share=network
 
 modules:
   - name: python3-systemd
@@ -42,6 +50,20 @@ modules:
       - type: archive
         url: https://files.pythonhosted.org/packages/10/9e/ab4458e00367223bda2dd7ccf0849a72235ee3e29b36dce732685d9b7ad9/systemd-python-235.tar.gz
         sha256: 4e57f39797fd5d9e2d22b8806a252d7c0106c936039d1e71c8c6b8008e695c0a
+
+  - name: python3-pathspec
+    # pathspec implements git-wildmatch — used by github_installer to
+    # filter out files marked `export-ignore` in .gitattributes and any
+    # tracked-but-ignored files in .gitignore before installing.  Shipped
+    # as a universal (pure-Python) wheel to avoid a build step.
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --no-deps --no-index
+          --prefix=${FLATPAK_DEST} pathspec-1.1.1-py3-none-any.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl
+        sha256: a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
 
   - name: gse-profiler
     buildsystem: simple

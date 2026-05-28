@@ -29,6 +29,7 @@
       <li>System journal (read-only) — to show GNOME Shell and extension logs in the built-in log viewer.</li>
       <li>org.gnome.Shell — to list, enable, disable and inspect installed extensions via the org.gnome.Shell.Extensions interface.</li>
       <li>org.gnome.SessionManager — to log out the session after the bridge is installed or removed, so GNOME Shell picks up the change.</li>
+      <li>Network access — to download GNOME Shell extensions from GitHub on user request and to check whether an installed GitHub-sourced extension has a newer upstream commit. Used only for explicit user actions and a one-shot update check at app start; no telemetry or background traffic.</li>
     </ul>
   </description>
 

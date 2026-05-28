@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Any
 
 import gi
@@ -23,6 +24,8 @@ from app.core.dbus_client import (
     DBusClient,
     ExtensionState,
 )
+from app.core.github_installer import GitHubInstaller, GitHubSource, read_source
+from app.core.shell_restart import prompt_shell_restart
 
 _log = logging.getLogger(__name__)
 
@@ -36,13 +39,19 @@ class DetailsView(Gtk.Stack):
         "favorite-toggled": (GObject.SignalFlags.RUN_LAST, None, ()),
     }
 
-    def __init__(self, dbus_client: DBusClient) -> None:
+    def __init__(
+        self,
+        dbus_client: DBusClient,
+        installer: GitHubInstaller | None = None,
+    ) -> None:
         super().__init__()
         self._dbus = dbus_client
+        self._installer = installer
         self._active_uuid: str | None = None
         self._all_extensions: dict[str, Any] = {}
         self._pending_disable = False
         self._switch_handler: int = 0
+        self._active_source: GitHubSource | None = None
 
         self._build_ui()
         dbus_client.connect("extensions-changed", self._on_extensions_changed)
@@ -137,6 +146,52 @@ class DetailsView(Gtk.Stack):
         actions_group.add(self._prefs_row)
 
         page.add(actions_group)
+
+        # ── GitHub source group (only visible for GitHub-sourced extensions) ─
+        self._github_group = Adw.PreferencesGroup()
+        self._github_group.set_title("GitHub Source")
+        self._github_group.set_visible(False)
+
+        self._github_repo_row = Adw.ActionRow()
+        self._github_repo_row.set_title("Repository")
+        self._github_open_btn = Gtk.Button(icon_name="adw-external-link-symbolic")
+        self._github_open_btn.add_css_class("flat")
+        self._github_open_btn.set_valign(Gtk.Align.CENTER)
+        self._github_open_btn.set_tooltip_text("Open on GitHub")
+        self._github_open_btn.connect("clicked", self._on_open_github)
+        self._github_repo_row.add_suffix(self._github_open_btn)
+        self._github_group.add(self._github_repo_row)
+
+        self._github_commit_row = Adw.ActionRow()
+        self._github_commit_row.set_title("Installed commit")
+        self._github_group.add(self._github_commit_row)
+
+        self._github_update_row = Adw.ActionRow()
+        self._github_update_row.set_title("Update Available")
+        self._github_update_btn = Gtk.Button(label="Update")
+        self._github_update_btn.add_css_class("suggested-action")
+        self._github_update_btn.set_valign(Gtk.Align.CENTER)
+        self._github_update_btn.connect("clicked", self._on_update_clicked)
+        self._github_update_row.add_suffix(self._github_update_btn)
+        self._github_update_row.set_visible(False)
+        self._github_group.add(self._github_update_row)
+
+        self._github_uninstall_row = Adw.ActionRow()
+        self._github_uninstall_row.set_title("Uninstall")
+        self._github_uninstall_row.set_subtitle(
+            "Remove this extension from your shell"
+        )
+        self._github_uninstall_btn = Gtk.Button(icon_name="user-trash-symbolic")
+        self._github_uninstall_btn.add_css_class("flat")
+        self._github_uninstall_btn.add_css_class("destructive-action")
+        self._github_uninstall_btn.set_valign(Gtk.Align.CENTER)
+        self._github_uninstall_btn.set_tooltip_text("Uninstall")
+        self._github_uninstall_btn.connect("clicked", self._on_uninstall_clicked)
+        self._github_uninstall_row.add_suffix(self._github_uninstall_btn)
+        self._github_group.add(self._github_uninstall_row)
+
+        page.add(self._github_group)
+
         self.add_named(page, "content")
         self.set_visible_child_name("placeholder")
 
@@ -238,6 +293,119 @@ class DetailsView(Gtk.Stack):
 
         self._folder_row.set_visible(bool(path))
         self._prefs_row.set_visible(has_prefs)
+
+        # GitHub source group
+        source = read_source(Path(path)) if path else None
+        self._active_source = source
+        if source is None:
+            self._github_group.set_visible(False)
+        else:
+            self._github_group.set_visible(True)
+            self._github_repo_row.set_subtitle(
+                f"github.com/{source.owner}/{source.repo}"
+            )
+            commit_text = source.short_sha or source.commit_sha
+            if source.ref:
+                commit_text = f"{commit_text}  ({source.ref})"
+            self._github_commit_row.set_subtitle(commit_text or "—")
+            new_sha = (
+                self._installer.has_update(uuid) if self._installer else None
+            )
+            self._set_update_row(new_sha)
+
+    def refresh_github_update(self, uuid: str, new_sha: str) -> None:
+        """Called by the main window when an update becomes available."""
+        if uuid == self._active_uuid:
+            self._set_update_row(new_sha)
+
+    def _set_update_row(self, new_sha: str | None) -> None:
+        if new_sha:
+            self._github_update_row.set_visible(True)
+            self._github_update_row.set_subtitle(
+                f"Upstream is at {new_sha[:7]} — click Update to reinstall."
+            )
+        else:
+            self._github_update_row.set_visible(False)
+
+    def _on_open_github(self, _btn: Gtk.Button) -> None:
+        if self._active_source is None:
+            return
+        try:
+            Gio.AppInfo.launch_default_for_uri(self._active_source.html_url, None)
+        except GLib.Error as exc:
+            _log.warning("Failed to open GitHub URL: %s", exc)
+
+    def _on_update_clicked(self, _btn: Gtk.Button) -> None:
+        if self._installer is None or self._active_source is None:
+            return
+        self._github_update_btn.set_sensitive(False)
+        self._github_update_row.set_subtitle("Downloading update…")
+        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
+        self._installer.update(
+            self._active_source,
+            on_done=lambda uuid, err: self._on_update_done(parent, uuid, err),
+        )
+
+    def _on_update_done(
+        self,
+        parent: Gtk.Window | None,
+        uuid: str | None,
+        error: str | None,
+    ) -> None:
+        self._github_update_btn.set_sensitive(True)
+        if error or not uuid:
+            self._github_update_row.set_subtitle(error or "Update failed.")
+            return
+        self._github_update_row.set_visible(False)
+        prompt_shell_restart(parent, action="updated")
+
+    def _on_uninstall_clicked(self, _btn: Gtk.Button) -> None:
+        if self._active_uuid is None or self._installer is None:
+            return
+        info = self._all_extensions.get(self._active_uuid, {})
+        path_str = info.get("path") or ""
+        if not path_str:
+            return
+        uuid = self._active_uuid
+        path = Path(path_str)
+        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
+
+        dialog = Adw.AlertDialog.new(
+            "Uninstall Extension?",
+            f"Remove '{info.get('name') or uuid}' from your shell?",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("remove", "Uninstall")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def _on_response(_d: Adw.AlertDialog, response: str) -> None:
+            if response != "remove":
+                return
+            # Best-effort: disable first, then remove the directory.
+            self._dbus.disable_extension(
+                uuid,
+                on_done=lambda _err: self._do_uninstall(uuid, path, parent),
+            )
+
+        dialog.connect("response", _on_response)
+        if parent is not None:
+            dialog.present(parent)
+
+    def _do_uninstall(
+        self,
+        uuid: str,
+        path: Path,
+        parent: Gtk.Window | None,
+    ) -> None:
+        if self._installer is None:
+            return
+        if not self._installer.uninstall(path):
+            return
+        # Force-refresh and prompt for logout so gnome-shell forgets it.
+        self._dbus.list_extensions()
+        if self._active_uuid == uuid:
+            self.set_active_extension(None)
+        prompt_shell_restart(parent, action="removed")
 
     def _refresh_in_place(self, uuid: str, info: dict[str, Any]) -> None:
         state = info.get("state", ExtensionState.DISABLED)

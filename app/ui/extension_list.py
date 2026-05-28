@@ -13,6 +13,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from app.core.bridge_manager import BRIDGE_UUID
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.github_installer import GitHubSource, list_github_extensions
 
 _log = logging.getLogger(__name__)
 
@@ -73,6 +74,25 @@ class _ExtRow(Gtk.ListBoxRow):
         text_box.append(self._uuid_label)
 
         box.append(text_box)
+
+        # GitHub source badge — hidden by default, shown for github-sourced ext.
+        self._github_icon = Gtk.Image.new_from_icon_name(
+            "applications-internet-symbolic"
+        )
+        self._github_icon.set_valign(Gtk.Align.CENTER)
+        self._github_icon.set_tooltip_text("Installed from GitHub")
+        self._github_icon.add_css_class("dim-label")
+        self._github_icon.set_visible(False)
+        box.append(self._github_icon)
+
+        # Update-available dot — only when github_installer found a newer SHA.
+        self._update_dot = Gtk.Label(label="●")
+        self._update_dot.set_valign(Gtk.Align.CENTER)
+        self._update_dot.add_css_class("accent")
+        self._update_dot.set_tooltip_text("Update available")
+        self._update_dot.set_visible(False)
+        box.append(self._update_dot)
+
         self.set_child(box)
         self.update(info)
 
@@ -80,7 +100,13 @@ class _ExtRow(Gtk.ListBoxRow):
     def display_name(self) -> str:
         return self._name_label.get_label() or self.uuid
 
-    def update(self, info: dict[str, Any]) -> None:
+    def update(
+        self,
+        info: dict[str, Any],
+        *,
+        github_source: GitHubSource | None = None,
+        has_update: bool = False,
+    ) -> None:
         name = info.get("name") or self.uuid
         state = info.get("state", ExtensionState.DISABLED)
         self._name_label.set_label(name)
@@ -95,6 +121,21 @@ class _ExtRow(Gtk.ListBoxRow):
             self._dot.add_css_class("warning")
         else:
             self._dot.add_css_class("dim-label")
+        self.set_github_source(github_source)
+        self.set_update_available(has_update)
+
+    def set_github_source(self, source: GitHubSource | None) -> None:
+        if source is None:
+            self._github_icon.set_visible(False)
+            return
+        self._github_icon.set_visible(True)
+        self._github_icon.set_tooltip_text(
+            f"Installed from github.com/{source.owner}/{source.repo}"
+            + (f" @ {source.short_sha}" if source.short_sha else "")
+        )
+
+    def set_update_available(self, has_update: bool) -> None:
+        self._update_dot.set_visible(has_update)
 
 
 class ExtensionListView(Gtk.Box):
@@ -115,6 +156,8 @@ class ExtensionListView(Gtk.Box):
         self._in_restore = False
         self._favorites: set[str] = _load_favorites()
         self._last_extensions: dict[str, Any] = {}
+        self._github_sources: dict[str, GitHubSource] = {}
+        self._github_updates: dict[str, str] = {}
 
         self._build_ui()
         dbus_client.connect("extensions-changed", self._on_extensions_changed)
@@ -221,6 +264,13 @@ class ExtensionListView(Gtk.Box):
     def is_favorite(self, uuid: str) -> bool:
         return uuid in self._favorites
 
+    def mark_github_update_available(self, uuid: str, new_sha: str) -> None:
+        """Mark a GitHub-sourced extension as having an upstream update."""
+        self._github_updates[uuid] = new_sha
+        row = self._rows.get(uuid)
+        if row is not None:
+            row.set_update_available(True)
+
     def toggle_favorite(self, uuid: str) -> None:
         if uuid in self._favorites:
             self._favorites.discard(uuid)
@@ -263,6 +313,15 @@ class ExtensionListView(Gtk.Box):
                 child = nxt
         self._rows.clear()
 
+        # Recompute which extensions came from GitHub (path-based filesystem scan).
+        self._github_sources = list_github_extensions(extensions)
+        # Drop stale update flags for extensions that no longer exist.
+        self._github_updates = {
+            uuid: sha
+            for uuid, sha in self._github_updates.items()
+            if uuid in self._github_sources
+        }
+
         fav_items:      list[tuple[str, dict]] = []
         user_items:     list[tuple[str, dict]] = []
         system_items:   list[tuple[str, dict]] = []
@@ -295,6 +354,8 @@ class ExtensionListView(Gtk.Box):
         ):
             for uuid, info in items:
                 row = _ExtRow(uuid, info)
+                row.set_github_source(self._github_sources.get(uuid))
+                row.set_update_available(uuid in self._github_updates)
                 lb.append(row)
                 self._rows[uuid] = row
 

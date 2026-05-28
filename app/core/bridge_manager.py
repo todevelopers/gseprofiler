@@ -7,12 +7,12 @@ from pathlib import Path
 import gi
 
 gi.require_version("Adw", "1")
-gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.shell_restart import prompt_shell_restart
 
 _log = logging.getLogger(__name__)
 
@@ -197,45 +197,7 @@ class BridgeManager:
             "GNOME Shell requires a full logout to reload extensions.\n"
             "Log out now?"
         )
-        dialog = Adw.AlertDialog.new("Shell Restart Required", body)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("restart", "Log Out")
-        dialog.set_response_appearance("restart", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.connect("response", self._on_restart_response)
-        if parent_window:
-            dialog.present(parent_window)
-
-    def _on_restart_response(self, _dialog: Adw.AlertDialog, response: str) -> None:
-        if response == "restart":
-            self._restart_shell()
-
-    def _restart_shell(self) -> None:
-        try:
-            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        except GLib.Error as exc:
-            _log.error("Cannot get session bus: %s", exc.message)
-            return
-
-        bus.call(
-            "org.gnome.SessionManager",
-            "/org/gnome/SessionManager",
-            "org.gnome.SessionManager",
-            "Logout",
-            GLib.Variant("(u)", (1,)),
-            None,
-            Gio.DBusCallFlags.NONE,
-            -1,
-            None,
-            self._on_logout_done,
-        )
-
-    def _on_logout_done(
-        self, source: Gio.DBusConnection, result: Gio.AsyncResult
-    ) -> None:
-        try:
-            source.call_finish(result)
-        except GLib.Error as exc:
-            _log.error("SessionManager.Logout failed: %s", exc.message)
+        prompt_shell_restart(parent_window, body=body)
 
 
 def _show_error(parent_window: Gtk.Window | None, message: str) -> None:
