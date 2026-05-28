@@ -174,6 +174,14 @@ class DetailsView(Gtk.Stack):
 
         self._github_commit_row = Adw.ActionRow()
         self._github_commit_row.set_title("Installed commit")
+        self._github_commit_row.set_subtitle_lines(1)
+        self._github_commit_row.set_subtitle_selectable(True)
+        self._github_commit_btn = Gtk.Button(icon_name="adw-external-link-symbolic")
+        self._github_commit_btn.add_css_class("flat")
+        self._github_commit_btn.set_valign(Gtk.Align.CENTER)
+        self._github_commit_btn.set_tooltip_text("Open commit on GitHub")
+        self._github_commit_btn.connect("clicked", self._on_open_commit)
+        self._github_commit_row.add_suffix(self._github_commit_btn)
         self._github_group.add(self._github_commit_row)
 
         self._github_update_row = Adw.ActionRow()
@@ -320,6 +328,7 @@ class DetailsView(Gtk.Stack):
             if source.ref:
                 commit_text = f"{commit_text}  ({source.ref})"
             self._github_commit_row.set_subtitle(commit_text or "—")
+            self._github_commit_btn.set_sensitive(bool(source.commit_sha))
             new_sha = (
                 self._installer.has_update(uuid) if self._installer else None
             )
@@ -354,6 +363,18 @@ class DetailsView(Gtk.Stack):
             Gio.AppInfo.launch_default_for_uri(self._active_source.html_url, None)
         except GLib.Error as exc:
             _log.warning("Failed to open GitHub URL: %s", exc)
+
+    def _on_open_commit(self, _btn: Gtk.Button) -> None:
+        if self._active_source is None or not self._active_source.commit_sha:
+            return
+        url = (
+            f"{self._active_source.html_url}/commit/"
+            f"{self._active_source.commit_sha}"
+        )
+        try:
+            Gio.AppInfo.launch_default_for_uri(url, None)
+        except GLib.Error as exc:
+            _log.warning("Failed to open commit URL: %s", exc)
 
     def _on_update_clicked(self, _btn: Gtk.Button) -> None:
         if self._installer is None or self._active_source is None:
