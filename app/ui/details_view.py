@@ -102,9 +102,19 @@ class DetailsView(Gtk.Stack):
 
         self._url_row = Adw.ActionRow()
         self._url_row.set_title("Homepage")
-        self._url_link = Gtk.LinkButton()
-        self._url_link.set_valign(Gtk.Align.CENTER)
-        self._url_row.add_suffix(self._url_link)
+        # Show the URL as the subtitle (ellipsized to one line) and put a
+        # small open-link button in the suffix.  Using the URL as a
+        # LinkButton label caused the title to be character-wrapped on
+        # long URLs.
+        self._url_row.set_subtitle_lines(1)
+        self._url_row.set_subtitle_selectable(True)
+        self._active_url: str = ""
+        url_btn = Gtk.Button(icon_name="adw-external-link-symbolic")
+        url_btn.add_css_class("flat")
+        url_btn.set_valign(Gtk.Align.CENTER)
+        url_btn.set_tooltip_text("Open homepage in browser")
+        url_btn.connect("clicked", self._on_open_homepage)
+        self._url_row.add_suffix(url_btn)
         details_group.add(self._url_row)
 
         page.add(details_group)
@@ -271,10 +281,12 @@ class DetailsView(Gtk.Stack):
         self._desc_row.set_visible(True)
 
         if url:
-            self._url_link.set_uri(url)
-            self._url_link.set_label(url)
+            self._url_row.set_subtitle(url)
+            self._active_url = url
             self._url_row.set_visible(True)
         else:
+            self._url_row.set_subtitle("")
+            self._active_url = ""
             self._url_row.set_visible(False)
 
         # State badge
@@ -326,6 +338,14 @@ class DetailsView(Gtk.Stack):
             )
         else:
             self._github_update_row.set_visible(False)
+
+    def _on_open_homepage(self, _btn: Gtk.Button) -> None:
+        if not self._active_url:
+            return
+        try:
+            Gio.AppInfo.launch_default_for_uri(self._active_url, None)
+        except GLib.Error as exc:
+            _log.warning("Failed to open URL %s: %s", self._active_url, exc)
 
     def _on_open_github(self, _btn: Gtk.Button) -> None:
         if self._active_source is None:
