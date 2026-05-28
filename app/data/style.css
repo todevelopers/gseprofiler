@@ -2,6 +2,18 @@
    Adopts Adwaita named colors (@accent_color, @success_color, …) so we
    inherit the user's accent and follow light/dark theme switches. */
 
+/* ── Application menu ─────────────────────────────────────────────────── */
+
+/* Center the section header labels in the sidebar burger menu
+   ("Extensions", "Bridge Extension") so they read as titles rather than
+   left-justified labels lining up with the menu items below them. */
+popover.menu label.title {
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
 /* ── Inspector ───────────────────────────────────────────────────────── */
 
 .inspector-toolbar {
