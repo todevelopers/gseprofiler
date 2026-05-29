@@ -124,14 +124,18 @@ class SourceRegistry:
         """Return a copy of the full UUID → source map."""
         return dict(self._sources)
 
-    def reconcile(self, extensions: dict[str, dict]) -> bool:
-        """Prune entries whose extension is no longer installed.
+    def reconcile(self, extensions_root: Path | str) -> bool:
+        """Prune entries whose installed directory no longer exists.
 
-        ``extensions`` is the current UUID → info map from D-Bus.  Returns
-        True if anything was pruned (and persisted).
+        ``extensions_root`` is the per-user extensions directory; an entry
+        is kept as long as ``extensions_root/<uuid>`` is present on disk.
+        This deliberately does *not* key off the live D-Bus extension list:
+        a freshly installed extension sits on disk but is unknown to
+        gnome-shell until the next session, and must not be pruned in that
+        window.  Returns True if anything was pruned (and persisted).
         """
-        present = set(extensions)
-        stale = [uuid for uuid in self._sources if uuid not in present]
+        root = Path(extensions_root)
+        stale = [uuid for uuid in self._sources if not (root / uuid).is_dir()]
         if not stale:
             return False
         for uuid in stale:

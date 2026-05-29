@@ -13,7 +13,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from app.core.bridge_manager import BRIDGE_UUID
 from app.core.dbus_client import DBusClient, ExtensionState
-from app.core.github_installer import GitHubInstaller, GitHubSource
+from app.core.github_installer import EXTENSIONS_ROOT, GitHubInstaller, GitHubSource
 
 _log = logging.getLogger(__name__)
 
@@ -315,9 +315,11 @@ class ExtensionListView(Gtk.Box):
         self._rows.clear()
 
         # Recompute which extensions came from GitHub.  The registry is the
-        # source of truth; reconcile it against the live list first so entries
-        # for uninstalled extensions are pruned, then keep those still present.
-        self._installer.registry.reconcile(extensions)
+        # source of truth; reconcile it against the on-disk extension dirs
+        # first (not the live D-Bus list — a just-installed extension is on
+        # disk but unknown to gnome-shell until the next session), then
+        # annotate the rows that actually exist in the current list.
+        self._installer.registry.reconcile(EXTENSIONS_ROOT)
         self._github_sources = {
             uuid: src
             for uuid, src in self._installer.registry.all().items()

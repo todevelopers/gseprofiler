@@ -86,23 +86,29 @@ def test_remove(tmp_path: Path) -> None:
     assert reg.remove("a@a") is False  # already gone
 
 
-def test_reconcile_prunes_stale(tmp_path: Path) -> None:
+def test_reconcile_prunes_when_dir_missing(tmp_path: Path) -> None:
+    ext_root = tmp_path / "extensions"
+    (ext_root / "present@x").mkdir(parents=True)  # gone@x has no dir
     path = tmp_path / "sources.json"
     reg = SourceRegistry(path)
     reg.set("present@x", _src())
     reg.set("gone@x", _src())
 
-    changed = reg.reconcile({"present@x": {"path": "/whatever"}})
+    changed = reg.reconcile(ext_root)
     assert changed is True
     assert set(reg.all()) == {"present@x"}
     # Persisted.
     assert set(SourceRegistry(path).all()) == {"present@x"}
 
 
-def test_reconcile_noop_returns_false(tmp_path: Path) -> None:
+def test_reconcile_keeps_dir_that_exists(tmp_path: Path) -> None:
+    """A freshly installed extension (dir on disk) must not be pruned."""
+    ext_root = tmp_path / "extensions"
+    (ext_root / "present@x").mkdir(parents=True)
     reg = SourceRegistry(tmp_path / "sources.json")
     reg.set("present@x", _src())
-    assert reg.reconcile({"present@x": {}}) is False
+    assert reg.reconcile(ext_root) is False
+    assert reg.get("present@x") is not None
 
 
 def test_all_returns_copy(tmp_path: Path) -> None:
