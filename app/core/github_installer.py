@@ -364,22 +364,6 @@ class GitHubInstaller(GObject.Object):
         for uuid, src in list_github_extensions(extensions).items():
             self._check_one(uuid, src)
 
-    def uninstall(self, extension_path: Path) -> bool:
-        """Remove an installed extension directory.  Returns ``True`` on success.
-
-        Caller is responsible for disabling the extension first.
-        """
-        try:
-            shutil.rmtree(extension_path)
-        except FileNotFoundError:
-            return True
-        except OSError as exc:
-            _log.error("Uninstall failed: %s", exc)
-            self.emit("error", str(exc))
-            return False
-        _log.info("Removed %s", extension_path)
-        return True
-
     # ── Install pipeline: API + download (main loop, async) ──────────────
 
     def _resolve_default_branch(

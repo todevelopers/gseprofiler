@@ -24,6 +24,7 @@ from app.core.dbus_client import (
     DBusClient,
     ExtensionState,
 )
+from app.core.extension_remover import remove_extension
 from app.core.github_installer import GitHubInstaller, GitHubSource, read_source
 from app.core.shell_restart import prompt_shell_restart
 
@@ -155,6 +156,18 @@ class DetailsView(Gtk.Stack):
         self._prefs_row.add_suffix(prefs_btn)
         actions_group.add(self._prefs_row)
 
+        # Uninstall — available for any user-installed extension.
+        self._uninstall_row = Adw.ActionRow()
+        self._uninstall_row.set_title("Uninstall")
+        self._uninstall_row.set_subtitle("Remove this extension from your shell")
+        self._uninstall_btn = Gtk.Button(label="Uninstall")
+        self._uninstall_btn.add_css_class("destructive-action")
+        self._uninstall_btn.set_valign(Gtk.Align.CENTER)
+        self._uninstall_btn.set_tooltip_text("Uninstall this extension")
+        self._uninstall_btn.connect("clicked", self._on_uninstall_clicked)
+        self._uninstall_row.add_suffix(self._uninstall_btn)
+        actions_group.add(self._uninstall_row)
+
         page.add(actions_group)
 
         # ── GitHub source group (only visible for GitHub-sourced extensions) ─
@@ -193,20 +206,6 @@ class DetailsView(Gtk.Stack):
         self._github_update_row.add_suffix(self._github_update_btn)
         self._github_update_row.set_visible(False)
         self._github_group.add(self._github_update_row)
-
-        self._github_uninstall_row = Adw.ActionRow()
-        self._github_uninstall_row.set_title("Uninstall")
-        self._github_uninstall_row.set_subtitle(
-            "Remove this extension from your shell"
-        )
-        self._github_uninstall_btn = Gtk.Button(icon_name="user-trash-symbolic")
-        self._github_uninstall_btn.add_css_class("flat")
-        self._github_uninstall_btn.add_css_class("destructive-action")
-        self._github_uninstall_btn.set_valign(Gtk.Align.CENTER)
-        self._github_uninstall_btn.set_tooltip_text("Uninstall")
-        self._github_uninstall_btn.connect("clicked", self._on_uninstall_clicked)
-        self._github_uninstall_row.add_suffix(self._github_uninstall_btn)
-        self._github_group.add(self._github_uninstall_row)
 
         page.add(self._github_group)
 
@@ -280,6 +279,7 @@ class DetailsView(Gtk.Stack):
         url = info.get("url", "")
         path = info.get("path", "")
         has_prefs = info.get("hasPrefs", False)
+        ext_type = info.get("type", 2)
 
         self._header_row.set_title(name)
         self._header_row.set_subtitle(uuid)
@@ -313,6 +313,11 @@ class DetailsView(Gtk.Stack):
 
         self._folder_row.set_visible(bool(path))
         self._prefs_row.set_visible(has_prefs)
+
+        # Uninstall only user-installed extensions (type 2); system
+        # extensions (type 1) live in a read-only prefix and cannot be
+        # removed by the user.
+        self._uninstall_row.set_visible(bool(path) and ext_type == 2)
 
         # GitHub source group
         source = read_source(Path(path)) if path else None
@@ -401,7 +406,7 @@ class DetailsView(Gtk.Stack):
         prompt_shell_restart(parent, action="updated")
 
     def _on_uninstall_clicked(self, _btn: Gtk.Button) -> None:
-        if self._active_uuid is None or self._installer is None:
+        if self._active_uuid is None:
             return
         info = self._all_extensions.get(self._active_uuid, {})
         path_str = info.get("path") or ""
@@ -438,9 +443,7 @@ class DetailsView(Gtk.Stack):
         path: Path,
         parent: Gtk.Window | None,
     ) -> None:
-        if self._installer is None:
-            return
-        if not self._installer.uninstall(path):
+        if not remove_extension(path):
             return
         # Force-refresh and prompt for logout so gnome-shell forgets it.
         self._dbus.list_extensions()
