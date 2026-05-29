@@ -200,6 +200,11 @@ class MainWindow(Adw.ApplicationWindow):
         menu_btn.set_icon_name("open-menu-symbolic")
         menu_btn.set_tooltip_text("Application menu")
         menu_btn.set_menu_model(menu)
+        # Gtk CSS has no `margin: auto`, so center the section header
+        # labels in code each time the menu popover is shown.
+        menu_popover = menu_btn.get_popover()
+        if menu_popover is not None:
+            menu_popover.connect("map", self._center_menu_titles)
 
         github_add_btn = Gtk.Button()
         github_add_btn.set_icon_name("list-add-symbolic")
@@ -263,6 +268,25 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_favorite_toggled(self, _details: DetailsView) -> None:
         if self._active_uuid:
             self._ext_list.toggle_favorite(self._active_uuid)
+
+    # ── Menu styling ───────────────────────────────────────────────────────
+
+    def _center_menu_titles(self, popover: Gtk.Widget) -> None:
+        """Center the ``label.title`` section headers in the burger menu.
+
+        Gtk CSS has no ``margin: auto``, so we set the alignment on the
+        actual label widgets each time the popover is mapped.
+        """
+        self._center_title_labels(popover)
+
+    def _center_title_labels(self, widget: Gtk.Widget) -> None:
+        if isinstance(widget, Gtk.Label) and widget.has_css_class("title"):
+            widget.set_halign(Gtk.Align.CENTER)
+            widget.set_xalign(0.5)
+        child = widget.get_first_child()
+        while child is not None:
+            self._center_title_labels(child)
+            child = child.get_next_sibling()
 
     # ── Sidebar toggle ─────────────────────────────────────────────────────
 
