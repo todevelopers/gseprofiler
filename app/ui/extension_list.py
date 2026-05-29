@@ -77,7 +77,7 @@ class _ExtRow(Gtk.ListBoxRow):
 
         # GitHub source badge — hidden by default, shown for github-sourced ext.
         self._github_icon = Gtk.Image.new_from_icon_name(
-            "applications-internet-symbolic"
+            "folder-download-symbolic"
         )
         self._github_icon.set_valign(Gtk.Align.CENTER)
         self._github_icon.set_tooltip_text("Installed from GitHub")
