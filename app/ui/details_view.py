@@ -25,7 +25,7 @@ from app.core.dbus_client import (
     ExtensionState,
 )
 from app.core.extension_remover import remove_extension
-from app.core.github_installer import GitHubInstaller, GitHubSource, read_source
+from app.core.github_installer import GitHubInstaller, GitHubSource
 from app.core.shell_restart import prompt_shell_restart
 
 _log = logging.getLogger(__name__)
@@ -333,8 +333,9 @@ class DetailsView(Gtk.Stack):
         # removed by the user.
         self._uninstall_row.set_visible(bool(path) and ext_type == 2)
 
-        # GitHub source group
-        source = read_source(Path(path)) if path else None
+        # GitHub source group — provenance comes from the registry, keyed
+        # by UUID (we never write into the extension's own metadata.json).
+        source = self._installer.registry.get(uuid) if self._installer else None
         self._active_source = source
         if source is None:
             self._github_group.set_visible(False)
@@ -519,6 +520,10 @@ class DetailsView(Gtk.Stack):
     ) -> None:
         if not remove_extension(path):
             return
+        # Drop the provenance entry too (reconcile would also catch it, but
+        # do it eagerly so the registry stays in step with the filesystem).
+        if self._installer is not None:
+            self._installer.registry.remove(uuid)
         # Force-refresh and prompt for logout so gnome-shell forgets it.
         self._dbus.list_extensions()
         if self._active_uuid == uuid:

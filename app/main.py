@@ -179,7 +179,7 @@ class MainWindow(Adw.ApplicationWindow):
         content_toolbar.set_content(self._view_stack)
 
         # ── Sidebar (extension list) ───────────────────────────────────────
-        self._ext_list = ExtensionListView(self._dbus)
+        self._ext_list = ExtensionListView(self._dbus, self._installer)
         self._ext_list.connect("extension-activated", self._on_extension_activated)
         self._details_view.connect("favorite-toggled", self._on_favorite_toggled)
 

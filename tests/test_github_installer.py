@@ -95,14 +95,7 @@ def test_filter_strips_git_meta_and_export_ignore_and_gitignore(tmp_path: Path) 
         },
     )
 
-    uuid = _do_extract_install(
-        owner="o",
-        repo="r",
-        ref="main",
-        sha="deadbeefcafe",
-        tarball=tar,
-        extensions_root=tmp_path,
-    )
+    uuid = _do_extract_install(tar, extensions_root=tmp_path)
     assert uuid == "test@ex"
     target = tmp_path / "test@ex"
 
@@ -125,24 +118,21 @@ def test_filter_strips_git_meta_and_export_ignore_and_gitignore(tmp_path: Path) 
     assert not (target / "debug.log").exists()
 
 
-def test_install_records_github_source(tmp_path: Path) -> None:
-    from app.core.github_installer import SOURCE_KEY, _do_extract_install
+def test_install_leaves_metadata_untouched(tmp_path: Path) -> None:
+    """We no longer inject provenance into the upstream metadata.json."""
+    from app.core.github_installer import _do_extract_install
 
-    meta = json.dumps({"uuid": "test@ex", "name": "Test"})
+    meta_obj = {"uuid": "test@ex", "name": "Test"}
     tar = _make_tarball(
-        "repo-cafef00d", {"metadata.json": meta, "extension.js": ""}
+        "repo-cafef00d", {"metadata.json": json.dumps(meta_obj), "extension.js": ""}
     )
-    _do_extract_install("owner", "repo", "main", "cafef00d", tar, tmp_path)
+    _do_extract_install(tar, extensions_root=tmp_path)
 
     written = json.loads(
         (tmp_path / "test@ex" / "metadata.json").read_text(encoding="utf-8")
     )
-    src = written[SOURCE_KEY]
-    assert src["owner"] == "owner"
-    assert src["repo"] == "repo"
-    assert src["ref"] == "main"
-    assert src["commit_sha"] == "cafef00d"
-    assert src["installed_at"]  # non-empty ISO timestamp
+    assert "_gse_profiler_source" not in written
+    assert written == meta_obj
 
 
 def test_install_rejects_missing_metadata(tmp_path: Path) -> None:
@@ -150,7 +140,7 @@ def test_install_rejects_missing_metadata(tmp_path: Path) -> None:
 
     tar = _make_tarball("repo-x", {"extension.js": ""})  # no metadata.json
     with pytest.raises(InstallError, match="metadata.json"):
-        _do_extract_install("o", "r", "main", "x", tar, tmp_path)
+        _do_extract_install(tar, extensions_root=tmp_path)
 
 
 def test_install_rejects_metadata_without_uuid(tmp_path: Path) -> None:
@@ -158,7 +148,7 @@ def test_install_rejects_metadata_without_uuid(tmp_path: Path) -> None:
 
     tar = _make_tarball("repo-x", {"metadata.json": json.dumps({"name": "no uuid"})})
     with pytest.raises(InstallError, match="uuid"):
-        _do_extract_install("o", "r", "main", "x", tar, tmp_path)
+        _do_extract_install(tar, extensions_root=tmp_path)
 
 
 def test_filter_guard_when_metadata_in_gitignore(tmp_path: Path) -> None:
@@ -178,7 +168,7 @@ def test_filter_guard_when_metadata_in_gitignore(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(InstallError, match="metadata.json"):
-        _do_extract_install("o", "r", "main", "x", tar, tmp_path)
+        _do_extract_install(tar, extensions_root=tmp_path)
 
 
 def test_install_compiles_gsettings_schemas(tmp_path: Path) -> None:
@@ -206,7 +196,7 @@ def test_install_compiles_gsettings_schemas(tmp_path: Path) -> None:
             "schemas/org.example.test.gschema.xml": schema_xml,
         },
     )
-    _do_extract_install("o", "r", "main", "abc", tar, tmp_path)
+    _do_extract_install(tar, extensions_root=tmp_path)
     assert (tmp_path / "schemas@ex" / "schemas" / "gschemas.compiled").is_file()
 
 
@@ -227,95 +217,45 @@ def test_install_fails_on_invalid_schema(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(InstallError, match="schemas"):
-        _do_extract_install("o", "r", "main", "abc", tar, tmp_path)
+        _do_extract_install(tar, extensions_root=tmp_path)
 
 
-def test_update_preserves_installed_at(tmp_path: Path) -> None:
-    """Re-installing into an existing target keeps the original installed_at."""
-    from app.core.github_installer import SOURCE_KEY, _do_extract_install
-
-    meta = json.dumps({"uuid": "test@ex", "name": "Test"})
-    tar1 = _make_tarball("repo-aaaaaaa", {"metadata.json": meta})
-    _do_extract_install("o", "r", "main", "aaaaaaa", tar1, tmp_path)
-
-    first = json.loads(
-        (tmp_path / "test@ex" / "metadata.json").read_text(encoding="utf-8")
-    )
-    first_installed_at = first[SOURCE_KEY]["installed_at"]
-
-    # Now install a different SHA into the same UUID — installed_at must persist.
-    tar2 = _make_tarball("repo-bbbbbbb", {"metadata.json": meta})
-    _do_extract_install("o", "r", "main", "bbbbbbb", tar2, tmp_path)
-
-    second = json.loads(
-        (tmp_path / "test@ex" / "metadata.json").read_text(encoding="utf-8")
-    )
-    assert second[SOURCE_KEY]["commit_sha"] == "bbbbbbb"
-    assert second[SOURCE_KEY]["installed_at"] == first_installed_at
+# ─── Provenance recording (registry) ───────────────────────────────────────
 
 
-# ─── read_source / list_github_extensions ─────────────────────────────────
+def test_finish_install_records_source_in_registry(tmp_path: Path) -> None:
+    from app.core.github_installer import GitHubInstaller
+    from app.core.source_registry import SourceRegistry
+
+    reg = SourceRegistry(tmp_path / "sources.json")
+    inst = GitHubInstaller(reg)
+
+    inst._finish_install("ext@x", "owner", "repo", "main", "cafef00d", None)
+
+    src = reg.get("ext@x")
+    assert src is not None
+    assert src.owner == "owner"
+    assert src.repo == "repo"
+    assert src.ref == "main"
+    assert src.commit_sha == "cafef00d"
+    assert src.installed_at  # non-empty ISO timestamp
 
 
-def test_read_source_returns_none_for_plain_extension(tmp_path: Path) -> None:
-    from app.core.github_installer import read_source
+def test_finish_install_preserves_installed_at_on_update(tmp_path: Path) -> None:
+    """Re-installing the same UUID keeps the original installed_at."""
+    from app.core.github_installer import GitHubInstaller
+    from app.core.source_registry import SourceRegistry
 
-    (tmp_path / "metadata.json").write_text(
-        json.dumps({"uuid": "x@x"}), encoding="utf-8"
-    )
-    assert read_source(tmp_path) is None
+    reg = SourceRegistry(tmp_path / "sources.json")
+    inst = GitHubInstaller(reg)
 
+    inst._finish_install("ext@x", "o", "r", "main", "aaaaaaa", None)
+    first = reg.get("ext@x")
+    assert first is not None
+    first_installed_at = first.installed_at
 
-def test_read_source_parses_recorded_source(tmp_path: Path) -> None:
-    from app.core.github_installer import SOURCE_KEY, read_source
-
-    src = {
-        "owner": "o",
-        "repo": "r",
-        "ref": "main",
-        "commit_sha": "abcdef0",
-        "installed_at": "2026-05-28T10:00:00+00:00",
-    }
-    (tmp_path / "metadata.json").write_text(
-        json.dumps({"uuid": "x@x", SOURCE_KEY: src}), encoding="utf-8"
-    )
-    out = read_source(tmp_path)
-    assert out is not None
-    assert out.owner == "o"
-    assert out.short_sha == "abcdef0"
-    assert out.html_url == "https://github.com/o/r"
-
-
-def test_list_github_extensions_filters_correctly(tmp_path: Path) -> None:
-    from app.core.github_installer import SOURCE_KEY, list_github_extensions
-
-    p1 = tmp_path / "a"
-    p1.mkdir()
-    (p1 / "metadata.json").write_text(json.dumps({"uuid": "a@a"}), encoding="utf-8")
-
-    p2 = tmp_path / "b"
-    p2.mkdir()
-    (p2 / "metadata.json").write_text(
-        json.dumps(
-            {
-                "uuid": "b@b",
-                SOURCE_KEY: {
-                    "owner": "o",
-                    "repo": "r",
-                    "ref": "main",
-                    "commit_sha": "deadbeef",
-                    "installed_at": "2026-05-28T10:00:00+00:00",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    extensions = {
-        "a@a": {"path": str(p1)},
-        "b@b": {"path": str(p2)},
-        "c@c": {"path": ""},  # no path — skipped
-    }
-    result = list_github_extensions(extensions)
-    assert set(result) == {"b@b"}
-    assert result["b@b"].owner == "o"
+    inst._finish_install("ext@x", "o", "r", "main", "bbbbbbb", None)
+    second = reg.get("ext@x")
+    assert second is not None
+    assert second.commit_sha == "bbbbbbb"
+    assert second.installed_at == first_installed_at

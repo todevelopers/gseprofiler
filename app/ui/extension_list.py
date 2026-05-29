@@ -13,7 +13,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from app.core.bridge_manager import BRIDGE_UUID
 from app.core.dbus_client import DBusClient, ExtensionState
-from app.core.github_installer import GitHubSource, list_github_extensions
+from app.core.github_installer import GitHubInstaller, GitHubSource
 
 _log = logging.getLogger(__name__)
 
@@ -147,9 +147,10 @@ class ExtensionListView(Gtk.Box):
         "extension-activated": (GObject.SignalFlags.RUN_LAST, None, (str,)),
     }
 
-    def __init__(self, dbus_client: DBusClient) -> None:
+    def __init__(self, dbus_client: DBusClient, installer: GitHubInstaller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._dbus = dbus_client
+        self._installer = installer
         self._active_uuid: str | None = None
         self._rows: dict[str, _ExtRow] = {}
         self._search_text = ""
@@ -313,8 +314,15 @@ class ExtensionListView(Gtk.Box):
                 child = nxt
         self._rows.clear()
 
-        # Recompute which extensions came from GitHub (path-based filesystem scan).
-        self._github_sources = list_github_extensions(extensions)
+        # Recompute which extensions came from GitHub.  The registry is the
+        # source of truth; reconcile it against the live list first so entries
+        # for uninstalled extensions are pruned, then keep those still present.
+        self._installer.registry.reconcile(extensions)
+        self._github_sources = {
+            uuid: src
+            for uuid, src in self._installer.registry.all().items()
+            if uuid in extensions
+        }
         # Drop stale update flags for extensions that no longer exist.
         self._github_updates = {
             uuid: sha

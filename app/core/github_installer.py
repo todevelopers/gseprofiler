@@ -23,7 +23,6 @@ import tarfile
 import tempfile
 import threading
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +34,12 @@ gi.require_version("GLib", "2.0")
 gi.require_version("GObject", "2.0")
 gi.require_version("Soup", "3.0")
 from gi.repository import Gio, GLib, GObject, Soup
+
+# Re-exported for backwards-compatible imports (``from app.core.github_installer
+# import GitHubSource``).  The dataclass lives in its own module to avoid a
+# circular import with the source registry.
+from app.core.github_source import GitHubSource
+from app.core.source_registry import SourceRegistry
 
 try:
     import pathspec  # type: ignore[import-untyped]
@@ -54,11 +59,6 @@ EXTENSIONS_ROOT: Path = (
     if _IN_FLATPAK
     else Path(GLib.get_user_data_dir()) / "gnome-shell" / "extensions"
 )
-
-#: Custom ``metadata.json`` key that records where this extension came from.
-#: GNOME Shell ignores unknown keys (same trick as ``bundle-hash`` for the
-#: bridge extension).
-SOURCE_KEY = "_gse_profiler_source"
 
 _GITHUB_API = "https://api.github.com"
 _USER_AGENT = "gse-profiler"
@@ -89,44 +89,6 @@ class InstallError(Exception):
     """Raised when an install/update fails with a user-presentable message."""
 
 
-@dataclass
-class GitHubSource:
-    """Metadata about where a GitHub-sourced extension came from.
-
-    Persisted into ``metadata.json`` under :data:`SOURCE_KEY`.
-    """
-
-    owner: str
-    repo: str
-    ref: str  # branch name we tracked (default branch in V1)
-    commit_sha: str
-    installed_at: str  # ISO-8601 UTC
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> GitHubSource | None:
-        try:
-            return cls(
-                owner=str(d["owner"]),
-                repo=str(d["repo"]),
-                ref=str(d["ref"]),
-                commit_sha=str(d["commit_sha"]),
-                installed_at=str(d.get("installed_at", "")),
-            )
-        except (KeyError, TypeError):
-            return None
-
-    @property
-    def html_url(self) -> str:
-        return f"https://github.com/{self.owner}/{self.repo}"
-
-    @property
-    def short_sha(self) -> str:
-        return self.commit_sha[:7] if self.commit_sha else ""
-
-
 # ─── Public helpers ────────────────────────────────────────────────────────
 
 
@@ -139,39 +101,6 @@ def parse_repo_url(url: str) -> tuple[str, str] | None:
     if not m:
         return None
     return m.group("owner"), m.group("repo")
-
-
-def read_source(extension_path: Path) -> GitHubSource | None:
-    """Read the recorded :class:`GitHubSource` for an installed extension.
-
-    Returns ``None`` if the extension's ``metadata.json`` is missing, invalid,
-    or does not carry our :data:`SOURCE_KEY`.
-    """
-    try:
-        meta = json.loads(
-            (extension_path / "metadata.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
-        return None
-    src = meta.get(SOURCE_KEY)
-    if not isinstance(src, dict):
-        return None
-    return GitHubSource.from_dict(src)
-
-
-def list_github_extensions(
-    extensions: dict[str, dict[str, Any]],
-) -> dict[str, GitHubSource]:
-    """Map UUIDs to :class:`GitHubSource` for GitHub-sourced extensions."""
-    out: dict[str, GitHubSource] = {}
-    for uuid, info in extensions.items():
-        path = info.get("path") or ""
-        if not path:
-            continue
-        src = read_source(Path(path))
-        if src is not None:
-            out[uuid] = src
-    return out
 
 
 # ─── Tarball extraction + filtering (runs on a worker thread) ─────────────
@@ -323,12 +252,19 @@ class GitHubInstaller(GObject.Object):
     def error(self, message: str) -> None:
         """Emitted on install / update / check failure."""
 
-    def __init__(self) -> None:
+    def __init__(self, registry: SourceRegistry | None = None) -> None:
         super().__init__()
         self._session = Soup.Session()
         self._session.set_user_agent(_USER_AGENT)
         # In-memory cache: uuid -> new SHA known to be available upstream.
         self._known_updates: dict[str, str] = {}
+        # Provenance store (UUID -> GitHubSource), persisted to sources.json.
+        self._registry = registry or SourceRegistry()
+
+    @property
+    def registry(self) -> SourceRegistry:
+        """The provenance registry, shared with the UI for source lookups."""
+        return self._registry
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -364,9 +300,10 @@ class GitHubInstaller(GObject.Object):
         return self._known_updates.get(uuid)
 
     def check_updates(self, extensions: dict[str, dict[str, Any]]) -> None:
-        """Query upstream HEAD for every GitHub-sourced extension."""
-        for uuid, src in list_github_extensions(extensions).items():
-            self._check_one(uuid, src)
+        """Query upstream HEAD for every installed GitHub-sourced extension."""
+        for uuid, src in self._registry.all().items():
+            if uuid in extensions:
+                self._check_one(uuid, src)
 
     def check_update(
         self,
@@ -531,7 +468,7 @@ class GitHubInstaller(GObject.Object):
         on_done: _InstallCallback | None,
     ) -> None:
         try:
-            uuid = _do_extract_install(owner, repo, ref, sha, tarball)
+            uuid = _do_extract_install(tarball)
         except InstallError as exc:
             GLib.idle_add(self._fail, on_done, str(exc))
             return
@@ -539,11 +476,36 @@ class GitHubInstaller(GObject.Object):
             _log.exception("Unexpected install error")
             GLib.idle_add(self._fail, on_done, f"Install failed: {exc}")
             return
-        GLib.idle_add(self._finish_install, uuid, on_done)
+        GLib.idle_add(self._finish_install, uuid, owner, repo, ref, sha, on_done)
 
     # ── Main-loop callbacks for worker results ───────────────────────────
 
-    def _finish_install(self, uuid: str, on_done: _InstallCallback | None) -> bool:
+    def _finish_install(
+        self,
+        uuid: str,
+        owner: str,
+        repo: str,
+        ref: str,
+        sha: str,
+        on_done: _InstallCallback | None,
+    ) -> bool:
+        # Preserve the original install timestamp when re-installing (update).
+        existing = self._registry.get(uuid)
+        installed_at = (
+            existing.installed_at
+            if existing is not None
+            else datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+        self._registry.set(
+            uuid,
+            GitHubSource(
+                owner=owner,
+                repo=repo,
+                ref=ref,
+                commit_sha=sha,
+                installed_at=installed_at,
+            ),
+        )
         self._known_updates.pop(uuid, None)
         self.emit("installed", uuid)
         if on_done:
@@ -621,16 +583,14 @@ class GitHubInstaller(GObject.Object):
 
 
 def _do_extract_install(
-    owner: str,
-    repo: str,
-    ref: str,
-    sha: str,
     tarball: bytes,
     extensions_root: Path | None = None,
 ) -> str:
     """Extract, validate, filter, and move into the extensions directory.
 
     Returns the extension UUID on success.  Raises :class:`InstallError`.
+    The upstream tree is installed verbatim — provenance is recorded
+    separately in the source registry, never written into ``metadata.json``.
     """
     root_dir = extensions_root or EXTENSIONS_ROOT
 
@@ -672,33 +632,7 @@ def _do_extract_install(
         if not meta_path.is_file():
             raise InstallError("Filter removed required file: metadata.json")
 
-        # Preserve ``installed_at`` if we are replacing an earlier install.
         target = root_dir / uuid
-        preserved_installed_at: str | None = None
-        if target.exists():
-            existing = read_source(target)
-            if existing is not None:
-                preserved_installed_at = existing.installed_at
-
-        installed_at = preserved_installed_at or datetime.now(
-            timezone.utc
-        ).isoformat(timespec="seconds")
-
-        # Re-read meta (filter may have rewritten it if metadata.json was
-        # in .gitignore — though the guard above would have rejected that).
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        source = GitHubSource(
-            owner=owner,
-            repo=repo,
-            ref=ref,
-            commit_sha=sha,
-            installed_at=installed_at,
-        )
-        meta[SOURCE_KEY] = source.to_dict()
-        meta_path.write_text(
-            json.dumps(meta, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
 
         # Compile GSettings schemas if the extension ships any.  Repos almost
         # never commit the compiled binary (it lives in their .gitignore);
