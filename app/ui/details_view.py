@@ -30,6 +30,8 @@ from app.core.shell_restart import prompt_shell_restart
 
 _log = logging.getLogger(__name__)
 
+_CHECK_SUBTITLE = "Pull the latest commit and reinstall"
+
 
 class DetailsView(Gtk.Stack):
     """Extension details panel: metadata, enable/disable, open folder/prefs."""
@@ -197,6 +199,18 @@ class DetailsView(Gtk.Stack):
         self._github_commit_row.add_suffix(self._github_commit_btn)
         self._github_group.add(self._github_commit_row)
 
+        self._github_check_row = Adw.ActionRow()
+        self._github_check_row.set_title("Check for Updates")
+        self._github_check_row.set_subtitle(_CHECK_SUBTITLE)
+        self._github_check_btn = Gtk.Button(label="Check")
+        self._github_check_btn.set_valign(Gtk.Align.CENTER)
+        self._github_check_btn.set_tooltip_text(
+            "Check upstream and reinstall if a newer commit exists"
+        )
+        self._github_check_btn.connect("clicked", self._on_check_updates_clicked)
+        self._github_check_row.add_suffix(self._github_check_btn)
+        self._github_group.add(self._github_check_row)
+
         self._github_update_row = Adw.ActionRow()
         self._github_update_row.set_title("Update Available")
         self._github_update_btn = Gtk.Button(label="Update")
@@ -334,6 +348,8 @@ class DetailsView(Gtk.Stack):
                 commit_text = f"{commit_text}  ({source.ref})"
             self._github_commit_row.set_subtitle(commit_text or "—")
             self._github_commit_btn.set_sensitive(bool(source.commit_sha))
+            self._github_check_row.set_subtitle(_CHECK_SUBTITLE)
+            self._github_check_btn.set_sensitive(self._installer is not None)
             new_sha = (
                 self._installer.has_update(uuid) if self._installer else None
             )
@@ -402,6 +418,64 @@ class DetailsView(Gtk.Stack):
         if error or not uuid:
             self._github_update_row.set_subtitle(error or "Update failed.")
             return
+        self._github_update_row.set_visible(False)
+        prompt_shell_restart(parent, action="updated")
+
+    def _on_check_updates_clicked(self, _btn: Gtk.Button) -> None:
+        if (
+            self._installer is None
+            or self._active_source is None
+            or self._active_uuid is None
+        ):
+            return
+        self._github_check_btn.set_sensitive(False)
+        self._github_check_row.set_subtitle("Checking for updates…")
+        src = self._active_source
+        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
+        self._installer.check_update(
+            self._active_uuid,
+            src,
+            on_done=lambda new_sha, err: self._on_check_done(parent, src, new_sha, err),
+        )
+
+    def _on_check_done(
+        self,
+        parent: Gtk.Window | None,
+        src: GitHubSource,
+        new_sha: str | None,
+        error: str | None,
+    ) -> None:
+        if error:
+            self._github_check_btn.set_sensitive(True)
+            self._github_check_row.set_subtitle(error)
+            return
+        if not new_sha:
+            self._github_check_btn.set_sensitive(True)
+            self._github_check_row.set_subtitle("Up to date.")
+            return
+        # New commit upstream — pull and reinstall.
+        self._github_check_row.set_subtitle(
+            f"New commit {new_sha[:7]} found — downloading…"
+        )
+        if self._installer is None:
+            self._github_check_btn.set_sensitive(True)
+            return
+        self._installer.update(
+            src,
+            on_done=lambda uuid, err: self._on_check_update_installed(parent, uuid, err),
+        )
+
+    def _on_check_update_installed(
+        self,
+        parent: Gtk.Window | None,
+        uuid: str | None,
+        error: str | None,
+    ) -> None:
+        self._github_check_btn.set_sensitive(True)
+        if error or not uuid:
+            self._github_check_row.set_subtitle(error or "Update failed.")
+            return
+        self._github_check_row.set_subtitle("Up to date.")
         self._github_update_row.set_visible(False)
         prompt_shell_restart(parent, action="updated")
 

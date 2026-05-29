@@ -294,6 +294,10 @@ def _filter_tree(root: Path) -> None:
 
 
 _InstallCallback = Callable[[str | None, str | None], None]
+#: ``on_done(new_sha, error)``: ``new_sha`` is the newer upstream commit when
+#: an update is available; both ``None`` means up to date; ``error`` is set on
+#: failure.
+_CheckCallback = Callable[[str | None, str | None], None]
 
 
 class GitHubInstaller(GObject.Object):
@@ -363,6 +367,20 @@ class GitHubInstaller(GObject.Object):
         """Query upstream HEAD for every GitHub-sourced extension."""
         for uuid, src in list_github_extensions(extensions).items():
             self._check_one(uuid, src)
+
+    def check_update(
+        self,
+        uuid: str,
+        source: GitHubSource,
+        on_done: _CheckCallback | None = None,
+    ) -> None:
+        """Check a single GitHub-sourced extension for a newer commit.
+
+        Reports the result via ``on_done(new_sha, error)`` and, when an
+        update is found, also emits ``update-available`` like the bulk
+        :meth:`check_updates`.
+        """
+        self._check_one(uuid, source, on_done)
 
     # ── Install pipeline: API + download (main loop, async) ──────────────
 
@@ -541,7 +559,12 @@ class GitHubInstaller(GObject.Object):
 
     # ── Update detection ─────────────────────────────────────────────────
 
-    def _check_one(self, uuid: str, src: GitHubSource) -> None:
+    def _check_one(
+        self,
+        uuid: str,
+        src: GitHubSource,
+        on_done: _CheckCallback | None = None,
+    ) -> None:
         url = f"{_GITHUB_API}/repos/{src.owner}/{src.repo}/commits/{src.ref}"
         msg = Soup.Message.new("GET", url)
         msg.get_request_headers().append("Accept", "application/vnd.github+json")
@@ -550,20 +573,26 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_LOW,
             None,
             self._on_check_done,
-            (uuid, src, msg),
+            (uuid, src, msg, on_done),
         )
 
     def _on_check_done(
         self,
         session: Soup.Session,
         result: Gio.AsyncResult,
-        user_data: tuple[str, GitHubSource, Soup.Message],
+        user_data: tuple[str, GitHubSource, Soup.Message, _CheckCallback | None],
     ) -> None:
-        uuid, src, msg = user_data
+        uuid, src, msg, on_done = user_data
+
+        def report(new_sha: str | None, error: str | None) -> None:
+            if on_done:
+                on_done(new_sha, error)
+
         try:
             bytes_ = session.send_and_read_finish(result)
         except GLib.Error as exc:
             _log.info("Update check for %s failed: %s", uuid, exc.message)
+            report(None, f"Network error: {exc.message}")
             return
         status = msg.get_status()
         if status != Soup.Status.OK:
@@ -572,16 +601,20 @@ class GitHubInstaller(GObject.Object):
                 uuid,
                 int(status),
             )
+            report(None, f"GitHub returned HTTP {int(status)}.")
             return
         try:
             data = json.loads(bytes(bytes_.get_data() or b""))
         except json.JSONDecodeError:
+            report(None, "Bad response from GitHub.")
             return
         new_sha = data.get("sha")
         if not new_sha or new_sha == src.commit_sha:
+            report(None, None)
             return
         self._known_updates[uuid] = new_sha
         self.emit("update-available", uuid, new_sha)
+        report(new_sha, None)
 
 
 # ─── Blocking install body (importable for unit tests) ────────────────────
