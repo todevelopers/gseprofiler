@@ -202,7 +202,7 @@ class DetailsView(Gtk.Stack):
         self._github_check_row = Adw.ActionRow()
         self._github_check_row.set_title("Check for Updates")
         self._github_check_row.set_subtitle(_CHECK_SUBTITLE)
-        self._github_check_btn = Gtk.Button(label="Check")
+        self._github_check_btn = Gtk.Button(icon_name="view-refresh-symbolic")
         self._github_check_btn.set_valign(Gtk.Align.CENTER)
         self._github_check_btn.set_tooltip_text(
             "Check upstream and reinstall if a newer commit exists"
