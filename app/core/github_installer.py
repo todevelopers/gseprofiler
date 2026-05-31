@@ -227,6 +227,7 @@ _InstallCallback = Callable[[str | None, str | None], None]
 #: an update is available; both ``None`` means up to date; ``error`` is set on
 #: failure.
 _CheckCallback = Callable[[str | None, str | None], None]
+_ProgressCallback = Callable[[str], None]
 
 
 class GitHubInstaller(GObject.Object):
@@ -272,11 +273,13 @@ class GitHubInstaller(GObject.Object):
         self,
         repo_url: str,
         on_done: _InstallCallback | None = None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         """Install a GitHub repo as a GNOME Shell extension (async).
 
         Calls ``on_done(uuid, error_message)`` when finished.  Exactly one
-        of the two arguments is set.
+        of the two arguments is set.  ``on_progress(message)`` is called on
+        the main loop at each pipeline stage.
         """
         parsed = parse_repo_url(repo_url)
         if parsed is None:
@@ -284,16 +287,19 @@ class GitHubInstaller(GObject.Object):
             return
         owner, repo = parsed
         _log.info("Installing from github.com/%s/%s", owner, repo)
-        self._resolve_default_branch(owner, repo, on_done)
+        _emit_progress(on_progress, "Checking repository…")
+        self._resolve_default_branch(owner, repo, on_done, on_progress)
 
     def update(
         self,
         source: GitHubSource,
         on_done: _InstallCallback | None = None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         """Re-install from upstream HEAD.  ``installed_at`` is preserved."""
         _log.info("Updating from github.com/%s/%s", source.owner, source.repo)
-        self._resolve_default_branch(source.owner, source.repo, on_done)
+        _emit_progress(on_progress, "Checking repository…")
+        self._resolve_default_branch(source.owner, source.repo, on_done, on_progress)
 
     def has_update(self, uuid: str) -> str | None:
         """Return the cached new SHA if an update is known to be available."""
@@ -326,6 +332,7 @@ class GitHubInstaller(GObject.Object):
         owner: str,
         repo: str,
         on_done: _InstallCallback | None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         url = f"{_GITHUB_API}/repos/{owner}/{repo}"
         msg = Soup.Message.new("GET", url)
@@ -335,16 +342,16 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_repo_info,
-            (owner, repo, msg, on_done),
+            (owner, repo, msg, on_done, on_progress),
         )
 
     def _on_repo_info(
         self,
         session: Soup.Session,
         result: Gio.AsyncResult,
-        user_data: tuple[str, str, Soup.Message, _InstallCallback | None],
+        user_data: tuple,
     ) -> None:
-        owner, repo, msg, on_done = user_data
+        owner, repo, msg, on_done, on_progress = user_data
         try:
             body = bytes(session.send_and_read_finish(result).get_data() or b"")
         except GLib.Error as exc:
@@ -363,7 +370,8 @@ class GitHubInstaller(GObject.Object):
         if not branch:
             self._fail(on_done, "GitHub did not return a default branch.")
             return
-        self._resolve_commit(owner, repo, branch, on_done)
+        _emit_progress(on_progress, "Fetching latest commit…")
+        self._resolve_commit(owner, repo, branch, on_done, on_progress)
 
     def _resolve_commit(
         self,
@@ -371,6 +379,7 @@ class GitHubInstaller(GObject.Object):
         repo: str,
         ref: str,
         on_done: _InstallCallback | None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         url = f"{_GITHUB_API}/repos/{owner}/{repo}/commits/{ref}"
         msg = Soup.Message.new("GET", url)
@@ -380,16 +389,16 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_commit_info,
-            (owner, repo, ref, msg, on_done),
+            (owner, repo, ref, msg, on_done, on_progress),
         )
 
     def _on_commit_info(
         self,
         session: Soup.Session,
         result: Gio.AsyncResult,
-        user_data: tuple[str, str, str, Soup.Message, _InstallCallback | None],
+        user_data: tuple,
     ) -> None:
-        owner, repo, ref, msg, on_done = user_data
+        owner, repo, ref, msg, on_done, on_progress = user_data
         try:
             body = bytes(session.send_and_read_finish(result).get_data() or b"")
         except GLib.Error as exc:
@@ -408,7 +417,8 @@ class GitHubInstaller(GObject.Object):
         if not sha:
             self._fail(on_done, "GitHub did not return a commit SHA.")
             return
-        self._download_tarball(owner, repo, ref, sha, on_done)
+        _emit_progress(on_progress, "Downloading archive…")
+        self._download_tarball(owner, repo, ref, sha, on_done, on_progress)
 
     def _download_tarball(
         self,
@@ -417,6 +427,7 @@ class GitHubInstaller(GObject.Object):
         ref: str,
         sha: str,
         on_done: _InstallCallback | None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         url = f"{_GITHUB_API}/repos/{owner}/{repo}/tarball/{sha}"
         msg = Soup.Message.new("GET", url)
@@ -426,16 +437,16 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_tarball,
-            (owner, repo, ref, sha, msg, on_done),
+            (owner, repo, ref, sha, msg, on_done, on_progress),
         )
 
     def _on_tarball(
         self,
         session: Soup.Session,
         result: Gio.AsyncResult,
-        user_data: tuple[str, str, str, str, Soup.Message, _InstallCallback | None],
+        user_data: tuple,
     ) -> None:
-        owner, repo, ref, sha, msg, on_done = user_data
+        owner, repo, ref, sha, msg, on_done, on_progress = user_data
         try:
             bytes_ = session.send_and_read_finish(result)
         except GLib.Error as exc:
@@ -449,10 +460,11 @@ class GitHubInstaller(GObject.Object):
         if not data:
             self._fail(on_done, "Empty tarball from GitHub.")
             return
+        _emit_progress(on_progress, "Extracting files…")
         # Hand off to a worker thread; results return via GLib.idle_add.
         threading.Thread(
             target=self._extract_install_blocking,
-            args=(owner, repo, ref, sha, data, on_done),
+            args=(owner, repo, ref, sha, data, on_done, on_progress),
             daemon=True,
         ).start()
 
@@ -466,9 +478,10 @@ class GitHubInstaller(GObject.Object):
         sha: str,
         tarball: bytes,
         on_done: _InstallCallback | None,
+        on_progress: _ProgressCallback | None = None,
     ) -> None:
         try:
-            uuid = _do_extract_install(tarball)
+            uuid = _do_extract_install(tarball, on_progress=on_progress)
         except InstallError as exc:
             GLib.idle_add(self._fail, on_done, str(exc))
             return
@@ -585,6 +598,7 @@ class GitHubInstaller(GObject.Object):
 def _do_extract_install(
     tarball: bytes,
     extensions_root: Path | None = None,
+    on_progress: _ProgressCallback | None = None,
 ) -> str:
     """Extract, validate, filter, and move into the extensions directory.
 
@@ -642,6 +656,8 @@ def _do_extract_install(
         _compile_schemas(src_root)
 
         # Move into place (replace existing).
+        if on_progress:
+            GLib.idle_add(on_progress, "Installing extension…")
         if target.exists():
             shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -695,6 +711,14 @@ def _compile_schemas(extension_root: Path) -> None:
     if stderr and ("error" in stderr.lower() or "warning" in stderr.lower()):
         raise InstallError("Failed to compile GSettings schemas: " + stderr)
     _log.info("Compiled GSettings schemas in %s", schemas_dir)
+
+
+# ─── Progress helper ──────────────────────────────────────────────────────
+
+
+def _emit_progress(callback: _ProgressCallback | None, message: str) -> None:
+    if callback:
+        callback(message)
 
 
 # ─── HTTP error helpers ───────────────────────────────────────────────────

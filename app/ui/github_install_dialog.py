@@ -145,8 +145,16 @@ class GitHubInstallDialog(Adw.Dialog):
         if not repo:
             self._show_error("Please enter a GitHub repository.")
             return
-        self._set_busy(True, "Downloading from GitHub…")
-        self._installer.install(repo, on_done=self._on_install_done)
+        self._set_busy(True, "Checking repository…")
+        self._installer.install(
+            repo,
+            on_done=self._on_install_done,
+            on_progress=self._on_progress,
+        )
+
+    def _on_progress(self, message: str) -> None:
+        if self._busy:
+            self._status_label.set_label(message)
 
     def _on_install_done(self, uuid: str | None, error: str | None) -> None:
         if error is not None or uuid is None:

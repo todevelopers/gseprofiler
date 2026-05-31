@@ -402,11 +402,12 @@ class DetailsView(Gtk.Stack):
         if self._installer is None or self._active_source is None:
             return
         self._github_update_btn.set_sensitive(False)
-        self._github_update_row.set_subtitle("Downloading update…")
+        self._github_update_row.set_subtitle("Checking repository…")
         parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
         self._installer.update(
             self._active_source,
             on_done=lambda uuid, err: self._on_update_done(parent, uuid, err),
+            on_progress=self._github_update_row.set_subtitle,
         )
 
     def _on_update_done(
@@ -464,6 +465,7 @@ class DetailsView(Gtk.Stack):
         self._installer.update(
             src,
             on_done=lambda uuid, err: self._on_check_update_installed(parent, uuid, err),
+            on_progress=self._github_check_row.set_subtitle,
         )
 
     def _on_check_update_installed(
