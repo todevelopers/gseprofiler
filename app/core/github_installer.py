@@ -81,7 +81,7 @@ _REPO_URL_RE = re.compile(
     r"^(?:https?://github\.com/)?"
     r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)/"
     r"(?P<repo>[A-Za-z0-9._-]+?)"
-    r"(?:\.git)?/?$"
+    r"(?:\.git)?$"
 )
 
 
@@ -94,7 +94,7 @@ class InstallError(Exception):
 
 def parse_repo_url(url: str) -> tuple[str, str] | None:
     """Parse a GitHub repo identifier into ``(owner, repo)``, or ``None``."""
-    url = (url or "").strip()
+    url = (url or "").strip().rstrip("/\\")
     if not url:
         return None
     m = _REPO_URL_RE.match(url)
