@@ -646,7 +646,7 @@ class LogViewerView(Gtk.Box):
         for cls in _TAG_CSS_CLASSES:
             self._pin_chip.remove_css_class(cls)
         self._pin_chip.add_css_class(_tag_color_class(self._pin_tag))
-        self._pin_chip.set_label(self._pin_tag)
+        self._pin_chip.set_label(f"{self._pin_tag} {self._tag_counts.get(self._pin_tag, 0)}")
         self._pin_chip.set_visible(True)
         self._pin_sep.set_visible(bool(self._tag_counts))
 
@@ -663,11 +663,11 @@ class LogViewerView(Gtk.Box):
         sorted_tags = sorted(self._tag_counts.items(), key=lambda x: -x[1])
         # Exclude the pinned extension's tag — it already has a dedicated chip
         filtered = [(t, c) for t, c in sorted_tags if t != self._pin_tag]
-        inline_tags = [t for t, _ in filtered[:_INLINE_TAG_CHIPS]]
+        inline = filtered[:_INLINE_TAG_CHIPS]
         overflow = max(0, len(filtered) - _INLINE_TAG_CHIPS)
 
-        for tag in inline_tags:
-            btn = Gtk.ToggleButton(label=tag)
+        for tag, count in inline:
+            btn = Gtk.ToggleButton(label=f"{tag} {count}")
             btn.add_css_class("tag-chip")
             btn.add_css_class(_tag_color_class(tag))
             btn.set_tooltip_text(f"Show only [{tag}] entries")
@@ -967,6 +967,8 @@ class LogViewerView(Gtk.Box):
         self._tag_counts[tag] = self._tag_counts.get(tag, 0) + 1
         if is_new_tag:
             self._rebuild_chips()
+        else:
+            self._refresh_chip_counts()
 
         self._refresh_stat_dots()
         self._update_list_stack()
@@ -1018,6 +1020,16 @@ class LogViewerView(Gtk.Box):
     def _refresh_stat_dots(self) -> None:
         for bucket, label in self._stat_labels.items():
             label.set_label(f"{_bucket_label(bucket)} {self._bucket_counts[bucket]}")
+
+    def _refresh_chip_counts(self) -> None:
+        """Update inline + pin chip labels in place when tag counts change
+        without a full rebuild (a new tag triggers _rebuild_chips instead)."""
+        for tag, btn in self._inline_chip_widgets.items():
+            btn.set_label(f"{tag} {self._tag_counts.get(tag, 0)}")
+        if self._pin_tag is not None:
+            self._pin_chip.set_label(
+                f"{self._pin_tag} {self._tag_counts.get(self._pin_tag, 0)}"
+            )
 
     def _update_status_label(self) -> None:
         visible = self._store.get_n_items()
