@@ -482,6 +482,7 @@ class LogViewerView(Gtk.Box):
 
         self._clear_tags_btn = Gtk.Button(label="Clear")
         self._clear_tags_btn.add_css_class("flat")
+        self._clear_tags_btn.add_css_class("tag-clear")
         self._clear_tags_btn.set_valign(Gtk.Align.CENTER)
         self._clear_tags_btn.set_tooltip_text("Clear tag filter")
         self._clear_tags_btn.set_visible(False)

@@ -202,6 +202,14 @@ menubutton.tag-chip > button {
   border-radius: 999px;
 }
 
+/* "Clear" action sits in the same row; keep it the chip height so toggling a
+   tag (which reveals this button) does not grow the tag bar. */
+button.tag-clear {
+  min-height: 0;
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
 .log-stat-dot.dot-error   { color: @error_color; }
 .log-stat-dot.dot-warn    { color: #e5a50a; }
 .log-stat-dot.dot-info    { color: #2190a4; }
