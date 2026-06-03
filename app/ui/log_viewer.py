@@ -126,7 +126,7 @@ class LogRowItem(GObject.Object):
         super().__init__()
         self.entry = entry
         tag, body = _extract_log_tag(entry.message)
-        self.tag = tag or ""  # empty string → displays as []
+        self.tag = tag if tag else entry.identifier
         self.body = body
         self.bucket = _priority_bucket(entry.priority)
         self.time_str = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
@@ -549,8 +549,7 @@ class LogViewerView(Gtk.Box):
         for cls in _TAG_CSS_CLASSES:
             label.remove_css_class(cls)
         label.set_label(f"[{item.tag}]")
-        if item.tag:
-            label.add_css_class(_tag_color_class(item.tag))
+        label.add_css_class(_tag_color_class(item.tag))
         self._apply_cell_tint(box, item.bucket)
 
     def _msg_setup(self, _fac: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
