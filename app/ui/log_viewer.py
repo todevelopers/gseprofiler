@@ -462,8 +462,12 @@ class LogViewerView(Gtk.Box):
 
         pop_scroll = Gtk.ScrolledWindow()
         pop_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        pop_scroll.set_min_content_height(100)
-        pop_scroll.set_max_content_height(280)
+        # Grow to fit the tag list (so short lists show every row) and only
+        # start scrolling past max. Without propagate-natural-height the window
+        # stays pinned at min_content_height and shows ~3 rows regardless.
+        pop_scroll.set_propagate_natural_height(True)
+        pop_scroll.set_min_content_height(0)
+        pop_scroll.set_max_content_height(400)
 
         self._popover_list = Gtk.ListBox()
         self._popover_list.set_selection_mode(Gtk.SelectionMode.NONE)
