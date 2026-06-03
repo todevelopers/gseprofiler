@@ -186,6 +186,22 @@ columnview > header > .button label {
   background-color: alpha(@view_fg_color, 0.10);
 }
 
+/* The "+N more" overflow control is a Gtk.MenuButton, which wraps its content
+   in a nested <button>. The unified .tag-chip metrics land on the outer
+   menubutton node, so the inner button keeps default Adwaita sizing and would
+   make the whole tag bar taller than the severity row. Push the compact
+   padding/min-height onto the inner button so it matches the other chips. */
+menubutton.tag-chip {
+  min-height: 0;
+  padding: 0;
+}
+
+menubutton.tag-chip > button {
+  min-height: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 .log-stat-dot.dot-error   { color: @error_color; }
 .log-stat-dot.dot-warn    { color: #e5a50a; }
 .log-stat-dot.dot-info    { color: #2190a4; }

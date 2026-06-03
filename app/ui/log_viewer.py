@@ -413,6 +413,7 @@ class LogViewerView(Gtk.Box):
         self._pin_chip.add_css_class("tag-chip")
         self._pin_chip.add_css_class("tag-chip-pin")
         self._pin_chip.add_css_class("flat")
+        self._pin_chip.set_valign(Gtk.Align.CENTER)
         self._pin_chip.set_visible(False)
         self._pin_chip.set_tooltip_text("Show only logs for the selected extension")
         self._pin_chip.connect("toggled", self._on_pin_chip_toggled)
@@ -430,14 +431,17 @@ class LogViewerView(Gtk.Box):
 
         # "+N more" overflow button with popover
         self._more_label = Gtk.Label(label="+0 more")
+        more_icon = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        more_icon.set_pixel_size(12)
         more_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         more_content.append(self._more_label)
-        more_content.append(Gtk.Image.new_from_icon_name("pan-down-symbolic"))
+        more_content.append(more_icon)
 
         self._more_btn = Gtk.MenuButton()
         self._more_btn.set_child(more_content)
         self._more_btn.add_css_class("flat")
         self._more_btn.add_css_class("tag-chip")
+        self._more_btn.set_valign(Gtk.Align.CENTER)
         self._more_btn.set_visible(False)
         bar.append(self._more_btn)
 
@@ -478,6 +482,7 @@ class LogViewerView(Gtk.Box):
 
         self._clear_tags_btn = Gtk.Button(label="Clear")
         self._clear_tags_btn.add_css_class("flat")
+        self._clear_tags_btn.set_valign(Gtk.Align.CENTER)
         self._clear_tags_btn.set_tooltip_text("Clear tag filter")
         self._clear_tags_btn.set_visible(False)
         self._clear_tags_btn.connect("clicked", self._on_clear_tags)
@@ -672,6 +677,7 @@ class LogViewerView(Gtk.Box):
             btn.add_css_class("tag-chip")
             btn.add_css_class("flat")
             btn.add_css_class(_tag_color_class(tag))
+            btn.set_valign(Gtk.Align.CENTER)
             btn.set_tooltip_text(f"Show only [{tag}] entries")
             btn.set_active(tag in self._active_tags)
             btn.connect("toggled", self._on_inline_chip_toggled, tag)
