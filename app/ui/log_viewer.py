@@ -82,6 +82,13 @@ def _tag_color_class(tag: str) -> str:
     return _TAG_CSS_CLASSES[idx]
 
 
+def _tag_display(tag: str) -> str:
+    """Human-readable label for a tag chip / popover row. Entries with no tag
+    have an empty-string tag; show a placeholder instead of a blank chip.
+    (The log table TAG column keeps showing the raw value.)"""
+    return tag if tag else "<empty>"
+
+
 def _extract_log_tag(message: str) -> tuple[str | None, str]:
     m = _MSG_TAG_RE.match(message)
     if m:
@@ -680,12 +687,12 @@ class LogViewerView(Gtk.Box):
         overflow = max(0, len(filtered) - _INLINE_TAG_CHIPS)
 
         for tag, count in inline:
-            btn = Gtk.ToggleButton(label=f"{tag} {count}")
+            btn = Gtk.ToggleButton(label=f"{_tag_display(tag)} {count}")
             btn.add_css_class("tag-chip")
             btn.add_css_class("flat")
             btn.add_css_class(_tag_color_class(tag))
             btn.set_valign(Gtk.Align.CENTER)
-            btn.set_tooltip_text(f"Show only [{tag}] entries")
+            btn.set_tooltip_text(f"Show only {_tag_display(tag)} entries")
             btn.set_active(tag in self._active_tags)
             btn.connect("toggled", self._on_inline_chip_toggled, tag)
             self._inline_chips_box.append(btn)
@@ -721,7 +728,7 @@ class LogViewerView(Gtk.Box):
             check.set_active(tag in self._active_tags)
             check.connect("toggled", self._on_popover_check_toggled, tag)
 
-            tag_lbl = Gtk.Label(label=tag)
+            tag_lbl = Gtk.Label(label=_tag_display(tag))
             tag_lbl.set_hexpand(True)
             tag_lbl.set_halign(Gtk.Align.START)
             tag_lbl.add_css_class("log-tag")
@@ -1045,7 +1052,7 @@ class LogViewerView(Gtk.Box):
         """Update inline + pin chip labels in place when tag counts change
         without a full rebuild (a new tag triggers _rebuild_chips instead)."""
         for tag, btn in self._inline_chip_widgets.items():
-            btn.set_label(f"{tag} {self._tag_counts.get(tag, 0)}")
+            btn.set_label(f"{_tag_display(tag)} {self._tag_counts.get(tag, 0)}")
         if self._pin_tag is not None:
             self._pin_chip.set_label(
                 f"{self._pin_tag} {self._tag_counts.get(self._pin_tag, 0)}"
