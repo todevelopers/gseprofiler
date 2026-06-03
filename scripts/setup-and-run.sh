@@ -44,7 +44,8 @@ export GIT_TERMINAL_PROMPT=0
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Updating existing installation at $INSTALL_DIR…"
-    git -C "$INSTALL_DIR" pull --ff-only
+    git -C "$INSTALL_DIR" fetch origin
+    git -C "$INSTALL_DIR" reset --hard origin/main
 else
     info "Cloning to $INSTALL_DIR…"
     git clone -c credential.helper= "$REPO_URL" "$INSTALL_DIR"
