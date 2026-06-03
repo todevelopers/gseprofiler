@@ -154,6 +154,49 @@ columnview > header > .button label {
   border-bottom: 1px solid alpha(@view_fg_color, 0.08);
 }
 
+/* Tag chip bar — beneath the filter bar */
+.log-tagbar {
+  background-color: @secondary_sidebar_bg_color;
+  padding: 4px 14px;
+  border-bottom: 1px solid alpha(@view_fg_color, 0.08);
+}
+
+/* Tag chip — small colored pill toggle button */
+.tag-chip {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  min-height: 0;
+  border-radius: 999px;
+  background-color: transparent;
+  opacity: 0.65;
+}
+
+.tag-chip:hover {
+  background-color: alpha(@view_fg_color, 0.07);
+  opacity: 0.90;
+}
+
+.tag-chip:checked {
+  opacity: 1;
+}
+
+/* Pin chip is bold to distinguish it from regular tags */
+.tag-chip-pin {
+  font-weight: 700;
+}
+
+/* Popover tag list */
+.tag-popover-list {
+  border-radius: 6px;
+}
+
+.tag-popover-list > row {
+  border-radius: 6px;
+  padding: 0;
+}
+
 .log-status-text {
   font-size: 11px;
   font-weight: 700;
@@ -260,18 +303,32 @@ columnview > header > .button label {
   font-weight: 600;
 }
 
-.log-tag.tag-c0 { color: #62a0ea; }
-.log-tag.tag-c1 { color: #57e389; }
-.log-tag.tag-c2 { color: #f6d32d; }
-.log-tag.tag-c3 { color: #ff7800; }
-.log-tag.tag-c4 { color: #c061cb; }
-.log-tag.tag-c5 { color: #f66151; }
-.log-tag.tag-c6 { color: #5bc8af; }
-.log-tag.tag-c7 { color: #ed9eb8; }
-.log-tag.tag-c8 { color: #cdab8f; }
-.log-tag.tag-c9 { color: #99c1f1; }
-.log-tag.tag-cA { color: #ffbe6f; }
-.log-tag.tag-cB { color: #dc8add; }
+.log-tag.tag-c0, .tag-chip.tag-c0 { color: #62a0ea; }
+.log-tag.tag-c1, .tag-chip.tag-c1 { color: #57e389; }
+.log-tag.tag-c2, .tag-chip.tag-c2 { color: #f6d32d; }
+.log-tag.tag-c3, .tag-chip.tag-c3 { color: #ff7800; }
+.log-tag.tag-c4, .tag-chip.tag-c4 { color: #c061cb; }
+.log-tag.tag-c5, .tag-chip.tag-c5 { color: #f66151; }
+.log-tag.tag-c6, .tag-chip.tag-c6 { color: #5bc8af; }
+.log-tag.tag-c7, .tag-chip.tag-c7 { color: #ed9eb8; }
+.log-tag.tag-c8, .tag-chip.tag-c8 { color: #cdab8f; }
+.log-tag.tag-c9, .tag-chip.tag-c9 { color: #99c1f1; }
+.log-tag.tag-cA, .tag-chip.tag-cA { color: #ffbe6f; }
+.log-tag.tag-cB, .tag-chip.tag-cB { color: #dc8add; }
+
+/* Checked state — colored tint background per palette hue */
+.tag-chip.tag-c0:checked { background-color: alpha(#62a0ea, 0.18); }
+.tag-chip.tag-c1:checked { background-color: alpha(#57e389, 0.18); }
+.tag-chip.tag-c2:checked { background-color: alpha(#f6d32d, 0.18); }
+.tag-chip.tag-c3:checked { background-color: alpha(#ff7800, 0.18); }
+.tag-chip.tag-c4:checked { background-color: alpha(#c061cb, 0.18); }
+.tag-chip.tag-c5:checked { background-color: alpha(#f66151, 0.18); }
+.tag-chip.tag-c6:checked { background-color: alpha(#5bc8af, 0.18); }
+.tag-chip.tag-c7:checked { background-color: alpha(#ed9eb8, 0.18); }
+.tag-chip.tag-c8:checked { background-color: alpha(#cdab8f, 0.18); }
+.tag-chip.tag-c9:checked { background-color: alpha(#99c1f1, 0.18); }
+.tag-chip.tag-cA:checked { background-color: alpha(#ffbe6f, 0.18); }
+.tag-chip.tag-cB:checked { background-color: alpha(#dc8add, 0.18); }
 
 /* Cell tints — applied to the wrapping log-cell box so the severity hue
    spans the full cell area. Zero cell padding (below) makes adjacent cells

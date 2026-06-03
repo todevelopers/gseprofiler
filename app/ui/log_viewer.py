@@ -47,6 +47,9 @@ _TAG_PALETTE_CHARS = "0123456789AB"
 _TAG_CSS_CLASSES = tuple(f"tag-c{c}" for c in _TAG_PALETTE_CHARS)
 _LEVEL_PILL_CLASSES = ("lvl-error", "lvl-warn", "lvl-info", "lvl-debug")
 
+# Max tag chips shown inline in the tag bar (excluding the pin chip)
+_INLINE_TAG_CHIPS = 4
+
 _MSG_TAG_RE = re.compile(r'^(?:JS LOG:\s*)?\[([^\]]+)\]\s*(.*)', re.DOTALL)
 
 
@@ -84,6 +87,11 @@ def _extract_log_tag(message: str) -> tuple[str | None, str]:
     if m:
         return m.group(1), m.group(2)
     return None, message
+
+
+def _entry_tag(entry: LogEntry) -> str:
+    tag, _ = _extract_log_tag(entry.message)
+    return tag if tag else entry.identifier
 
 
 def _settings_path() -> Path:
@@ -134,13 +142,20 @@ class LogViewerView(Gtk.Box):
         self._entries: deque[LogEntry] = deque(maxlen=MAX_ENTRIES)
 
         # Filter state
-        self._uuid_filter: str | None = None
-        self._selected_uuid: str | None = None
-        self._filter_selected = False
         self._active_buckets: set[str] = set()
+        self._active_tags: set[str] = set()
+        self._pin_tag: str | None = None
+        self._tag_counts: dict[str, int] = {}
         self._search_text = ""
         self._auto_scroll = True
         self._is_running = False
+
+        # Guards against cascading signal handlers when updating chip UI state
+        self._block_tag_signals = False
+
+        # Chip widget registries (populated by _rebuild_chips / _rebuild_popover)
+        self._inline_chip_widgets: dict[str, Gtk.ToggleButton] = {}
+        self._popover_row_widgets: dict[str, tuple[Gtk.CheckButton, Gtk.Label]] = {}
 
         # Bucket counts across all entries
         self._bucket_counts: dict[str, int] = {
@@ -202,14 +217,6 @@ class LogViewerView(Gtk.Box):
         self._cmd_revealer.set_child(cmd_bar)
 
         # ── Filter bar ──────────────────────────────────────────────────────
-        self._filter_selected_btn = Gtk.ToggleButton(label="Selected")
-        self._filter_selected_btn.set_icon_name("application-x-addon-symbolic")
-        self._filter_selected_btn.set_tooltip_text(
-            "Show logs for the selected extension only"
-        )
-        self._filter_selected_btn.set_active(False)
-        self._filter_selected_btn.connect("toggled", self._on_filter_selected_toggled)
-
         self._search_entry = Gtk.SearchEntry()
         self._search_entry.set_hexpand(True)
         self._search_entry.set_placeholder_text("Search logs…")
@@ -246,7 +253,6 @@ class LogViewerView(Gtk.Box):
 
         filter_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         filter_bar.add_css_class("log-filterbar")
-        filter_bar.append(self._filter_selected_btn)
         filter_bar.append(self._search_entry)
         filter_bar.append(self._auto_scroll_btn)
 
@@ -260,6 +266,9 @@ class LogViewerView(Gtk.Box):
         filter_bar.append(sep2)
         filter_bar.append(self._cmd_toggle_btn)
         filter_bar.append(self._start_stop_btn)
+
+        # ── Tag chip bar ─────────────────────────────────────────────────────
+        tag_bar = self._build_tag_bar()
 
         # ── Status bar (counts + stat dots + state pill) ───────────────────
         self._status_lbl = Gtk.Label()
@@ -379,6 +388,7 @@ class LogViewerView(Gtk.Box):
         self._list_stack.set_visible_child_name("empty")
 
         self.append(filter_bar)
+        self.append(tag_bar)
         self.append(self._cmd_revealer)
         self.append(status_bar)
         self.append(self._list_stack)
@@ -392,6 +402,87 @@ class LogViewerView(Gtk.Box):
         self.add_controller(shortcut_ctrl)
 
         self._update_status_label()
+
+    def _build_tag_bar(self) -> Gtk.Box:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bar.add_css_class("log-tagbar")
+        self._tag_bar = bar
+
+        # Pin chip — always first; updated when selected extension changes
+        self._pin_chip = Gtk.ToggleButton()
+        self._pin_chip.add_css_class("tag-chip")
+        self._pin_chip.add_css_class("tag-chip-pin")
+        self._pin_chip.set_visible(False)
+        self._pin_chip.set_tooltip_text("Show only logs for the selected extension")
+        self._pin_chip.connect("toggled", self._on_pin_chip_toggled)
+        bar.append(self._pin_chip)
+
+        self._pin_sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._pin_sep.set_margin_start(2)
+        self._pin_sep.set_margin_end(2)
+        self._pin_sep.set_visible(False)
+        bar.append(self._pin_sep)
+
+        # Dynamic inline chip slots
+        self._inline_chips_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bar.append(self._inline_chips_box)
+
+        # "+N more" overflow button with popover
+        self._more_label = Gtk.Label(label="+0 more")
+        more_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        more_content.append(self._more_label)
+        more_content.append(Gtk.Image.new_from_icon_name("pan-down-symbolic"))
+
+        self._more_btn = Gtk.MenuButton()
+        self._more_btn.set_child(more_content)
+        self._more_btn.add_css_class("flat")
+        self._more_btn.add_css_class("tag-chip")
+        self._more_btn.set_visible(False)
+        bar.append(self._more_btn)
+
+        # Popover: search entry + scrollable list of all tags
+        popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        popover_box.set_margin_top(8)
+        popover_box.set_margin_bottom(8)
+        popover_box.set_margin_start(8)
+        popover_box.set_margin_end(8)
+
+        self._popover_search = Gtk.SearchEntry()
+        self._popover_search.set_placeholder_text("Filter tags…")
+        self._popover_search.set_size_request(210, -1)
+        self._popover_search.connect("search-changed", self._on_popover_search_changed)
+        popover_box.append(self._popover_search)
+
+        pop_scroll = Gtk.ScrolledWindow()
+        pop_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        pop_scroll.set_min_content_height(100)
+        pop_scroll.set_max_content_height(280)
+
+        self._popover_list = Gtk.ListBox()
+        self._popover_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._popover_list.add_css_class("tag-popover-list")
+        self._popover_list.set_filter_func(self._popover_row_filter)
+        pop_scroll.set_child(self._popover_list)
+        popover_box.append(pop_scroll)
+
+        popover = Gtk.Popover()
+        popover.set_child(popover_box)
+        popover.connect("show", self._on_popover_show)
+        self._more_btn.set_popover(popover)
+
+        # Spacer pushes Clear to the right edge
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+
+        self._clear_tags_btn = Gtk.Button(label="Clear")
+        self._clear_tags_btn.add_css_class("flat")
+        self._clear_tags_btn.set_tooltip_text("Clear tag filter")
+        self._clear_tags_btn.set_visible(False)
+        self._clear_tags_btn.connect("clicked", self._on_clear_tags)
+        bar.append(self._clear_tags_btn)
+
+        return bar
 
     # ── Column factories ───────────────────────────────────────────────────
 
@@ -540,11 +631,161 @@ class LogViewerView(Gtk.Box):
     # ── Public API ─────────────────────────────────────────────────────────
 
     def set_selected_extension(self, uuid: str | None) -> None:
-        """Update the currently selected extension for the 'Selected' filter."""
-        self._selected_uuid = uuid
-        if self._filter_selected:
-            self._uuid_filter = uuid
-            self._rebuild_view()
+        """Update the pinned extension chip without auto-activating the filter."""
+        self._pin_tag = uuid.split("@")[0] if uuid else None
+        self._update_pin_chip()
+
+    # ── Tag bar — builders / refreshers ───────────────────────────────────
+
+    def _update_pin_chip(self) -> None:
+        if self._pin_tag is None:
+            self._pin_chip.set_visible(False)
+            self._pin_sep.set_visible(False)
+            return
+
+        for cls in _TAG_CSS_CLASSES:
+            self._pin_chip.remove_css_class(cls)
+        self._pin_chip.add_css_class(_tag_color_class(self._pin_tag))
+        self._pin_chip.set_label(self._pin_tag)
+        self._pin_chip.set_visible(True)
+        self._pin_sep.set_visible(bool(self._tag_counts))
+
+        self._block_tag_signals = True
+        self._pin_chip.set_active(self._pin_tag in self._active_tags)
+        self._block_tag_signals = False
+
+    def _rebuild_chips(self) -> None:
+        """Rebuild the inline tag chips from the current tag counts."""
+        while (child := self._inline_chips_box.get_first_child()):
+            self._inline_chips_box.remove(child)
+        self._inline_chip_widgets.clear()
+
+        sorted_tags = sorted(self._tag_counts.items(), key=lambda x: -x[1])
+        # Exclude the pinned extension's tag — it already has a dedicated chip
+        filtered = [(t, c) for t, c in sorted_tags if t != self._pin_tag]
+        inline_tags = [t for t, _ in filtered[:_INLINE_TAG_CHIPS]]
+        overflow = max(0, len(filtered) - _INLINE_TAG_CHIPS)
+
+        for tag in inline_tags:
+            btn = Gtk.ToggleButton(label=tag)
+            btn.add_css_class("tag-chip")
+            btn.add_css_class(_tag_color_class(tag))
+            btn.set_tooltip_text(f"Show only [{tag}] entries")
+            btn.set_active(tag in self._active_tags)
+            btn.connect("toggled", self._on_inline_chip_toggled, tag)
+            self._inline_chips_box.append(btn)
+            self._inline_chip_widgets[tag] = btn
+
+        if overflow > 0:
+            self._more_label.set_label(f"+{overflow} more")
+            self._more_btn.set_visible(True)
+        else:
+            self._more_btn.set_visible(False)
+
+        self._pin_sep.set_visible(
+            self._pin_tag is not None and bool(self._tag_counts)
+        )
+
+    def _rebuild_popover(self) -> None:
+        """Rebuild the popover list from the current tag counts (called on open)."""
+        while True:
+            row = self._popover_list.get_row_at_index(0)
+            if row is None:
+                break
+            self._popover_list.remove(row)
+        self._popover_row_widgets.clear()
+
+        for tag, count in sorted(self._tag_counts.items(), key=lambda x: -x[1]):
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(3)
+            row_box.set_margin_bottom(3)
+            row_box.set_margin_start(6)
+            row_box.set_margin_end(8)
+
+            check = Gtk.CheckButton()
+            check.set_active(tag in self._active_tags)
+            check.connect("toggled", self._on_popover_check_toggled, tag)
+
+            tag_lbl = Gtk.Label(label=tag)
+            tag_lbl.set_hexpand(True)
+            tag_lbl.set_halign(Gtk.Align.START)
+            tag_lbl.add_css_class("log-tag")
+            tag_lbl.add_css_class(_tag_color_class(tag))
+
+            count_lbl = Gtk.Label(label=str(count))
+            count_lbl.add_css_class("dim-label")
+
+            row_box.append(check)
+            row_box.append(tag_lbl)
+            row_box.append(count_lbl)
+
+            list_row = Gtk.ListBoxRow()
+            list_row.set_child(row_box)
+            list_row._tag_value = tag  # type: ignore[attr-defined]
+            self._popover_list.append(list_row)
+            self._popover_row_widgets[tag] = (check, count_lbl)
+
+    def _sync_tag_filter_state(self) -> None:
+        """Sync all chip toggle states and the Clear button without firing handlers."""
+        self._block_tag_signals = True
+        for tag, btn in self._inline_chip_widgets.items():
+            btn.set_active(tag in self._active_tags)
+        if self._pin_tag is not None:
+            self._pin_chip.set_active(self._pin_tag in self._active_tags)
+        for tag, (check, _) in self._popover_row_widgets.items():
+            check.set_active(tag in self._active_tags)
+        self._block_tag_signals = False
+        self._clear_tags_btn.set_visible(bool(self._active_tags))
+
+    # ── Tag bar — signal handlers ─────────────────────────────────────────
+
+    def _on_pin_chip_toggled(self, btn: Gtk.ToggleButton) -> None:
+        if self._block_tag_signals or self._pin_tag is None:
+            return
+        if btn.get_active():
+            self._active_tags.add(self._pin_tag)
+        else:
+            self._active_tags.discard(self._pin_tag)
+        self._sync_tag_filter_state()
+        self._rebuild_view()
+
+    def _on_inline_chip_toggled(self, btn: Gtk.ToggleButton, tag: str) -> None:
+        if self._block_tag_signals:
+            return
+        if btn.get_active():
+            self._active_tags.add(tag)
+        else:
+            self._active_tags.discard(tag)
+        self._sync_tag_filter_state()
+        self._rebuild_view()
+
+    def _on_popover_check_toggled(self, check: Gtk.CheckButton, tag: str) -> None:
+        if self._block_tag_signals:
+            return
+        if check.get_active():
+            self._active_tags.add(tag)
+        else:
+            self._active_tags.discard(tag)
+        self._sync_tag_filter_state()
+        self._rebuild_view()
+
+    def _on_popover_show(self, _popover: Gtk.Popover) -> None:
+        self._rebuild_popover()
+        self._popover_search.set_text("")
+
+    def _on_popover_search_changed(self, _entry: Gtk.SearchEntry) -> None:
+        self._popover_list.invalidate_filter()
+
+    def _popover_row_filter(self, row: Gtk.ListBoxRow) -> bool:
+        text = self._popover_search.get_text().lower()
+        if not text:
+            return True
+        return text in getattr(row, "_tag_value", "").lower()
+
+    def _on_clear_tags(self, _btn: Gtk.Button) -> None:
+        self._active_tags.clear()
+        self._sync_tag_filter_state()
+        self._rebuild_view()
 
     # ── Signal handlers — filters ──────────────────────────────────────────
 
@@ -552,11 +793,6 @@ class LogViewerView(Gtk.Box):
         revealed = btn.get_active()
         self._cmd_revealer.set_reveal_child(revealed)
         btn.set_icon_name("pan-up-symbolic" if revealed else "pan-down-symbolic")
-
-    def _on_filter_selected_toggled(self, btn: Gtk.ToggleButton) -> None:
-        self._filter_selected = btn.get_active()
-        self._uuid_filter = self._selected_uuid if self._filter_selected else None
-        self._rebuild_view()
 
     def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         self._search_text = entry.get_text()
@@ -581,6 +817,10 @@ class LogViewerView(Gtk.Box):
         self._store.splice(0, self._store.get_n_items(), [])
         for b in self._bucket_counts:
             self._bucket_counts[b] = 0
+        self._tag_counts.clear()
+        self._active_tags.clear()
+        self._rebuild_chips()
+        self._sync_tag_filter_state()
         self._refresh_stat_dots()
         self._update_status_label()
         self._update_list_stack()
@@ -620,9 +860,9 @@ class LogViewerView(Gtk.Box):
 
     def _on_export(self, _btn: Gtk.Button) -> None:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        if self._uuid_filter:
-            short = self._uuid_filter.split("@")[0]
-            base = f"gse-log_{short}_{ts}"
+        if len(self._active_tags) == 1:
+            tag = next(iter(self._active_tags))
+            base = f"gse-log_{tag}_{ts}"
         else:
             base = f"gse-log_{ts}"
 
@@ -714,9 +954,20 @@ class LogViewerView(Gtk.Box):
         if len(self._entries) == MAX_ENTRIES:
             evicted = self._entries[0]
             self._bucket_counts[_priority_bucket(evicted.priority)] -= 1
+            evicted_tag = _entry_tag(evicted)
+            self._tag_counts[evicted_tag] = max(0, self._tag_counts.get(evicted_tag, 0) - 1)
+            if self._tag_counts[evicted_tag] == 0:
+                del self._tag_counts[evicted_tag]
 
         self._entries.append(entry)
         self._bucket_counts[_priority_bucket(entry.priority)] += 1
+
+        tag = _entry_tag(entry)
+        is_new_tag = tag not in self._tag_counts
+        self._tag_counts[tag] = self._tag_counts.get(tag, 0) + 1
+        if is_new_tag:
+            self._rebuild_chips()
+
         self._refresh_stat_dots()
         self._update_list_stack()
 
@@ -749,10 +1000,8 @@ class LogViewerView(Gtk.Box):
         bucket = _priority_bucket(entry.priority)
         if self._active_buckets and bucket not in self._active_buckets:
             return False
-        if self._uuid_filter:
-            short = self._uuid_filter.split("@")[0]
-            if f"[{short}]" not in entry.message:
-                return False
+        if self._active_tags and _entry_tag(entry) not in self._active_tags:
+            return False
         if self._search_text and self._search_text.lower() not in entry.message.lower():
             return False
         return True
