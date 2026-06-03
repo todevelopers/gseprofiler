@@ -161,31 +161,35 @@ columnview > header > .button label {
   border-bottom: 1px solid alpha(@view_fg_color, 0.08);
 }
 
-/* Tag chip — small colored pill toggle button */
+/* Unified filter chip — base style shared by severity buttons and tag chips */
+.log-stat-dot,
 .tag-chip {
   font-family: monospace;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   padding: 2px 8px;
   min-height: 0;
   border-radius: 999px;
   background-color: transparent;
-  opacity: 0.65;
+  opacity: 0.55;
 }
 
+.log-stat-dot:hover,
 .tag-chip:hover {
-  background-color: alpha(@view_fg_color, 0.07);
-  opacity: 0.90;
+  background-color: alpha(@view_fg_color, 0.06);
+  opacity: 0.85;
 }
 
+.log-stat-dot:checked,
 .tag-chip:checked {
   opacity: 1;
+  background-color: alpha(@view_fg_color, 0.10);
 }
 
-/* Pin chip is bold to distinguish it from regular tags */
-.tag-chip-pin {
-  font-weight: 700;
-}
+.log-stat-dot.dot-error   { color: @error_color; }
+.log-stat-dot.dot-warn    { color: #e5a50a; }
+.log-stat-dot.dot-info    { color: #2190a4; }
+.log-stat-dot.dot-debug   { color: #888888; }
 
 /* Popover tag list */
 .tag-popover-list {
@@ -202,33 +206,6 @@ columnview > header > .button label {
   font-weight: 700;
   opacity: 0.55;
 }
-
-/* Stat dot button — colored dot + count, clickable to solo that level */
-.log-stat-dot {
-  font-family: monospace;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  min-height: 0;
-  border-radius: 999px;
-  background-color: transparent;
-  opacity: 0.55;
-}
-
-.log-stat-dot:hover {
-  background-color: alpha(@view_fg_color, 0.06);
-  opacity: 0.85;
-}
-
-.log-stat-dot:checked {
-  opacity: 1;
-  background-color: alpha(@view_fg_color, 0.10);
-}
-
-.log-stat-dot.dot-error   { color: @error_color; }
-.log-stat-dot.dot-warn    { color: #e5a50a; }
-.log-stat-dot.dot-info    { color: #2190a4; }
-.log-stat-dot.dot-debug   { color: #888888; }
 
 /* Running / stopped pill */
 .log-state-pill {
