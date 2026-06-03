@@ -295,6 +295,7 @@ class LogViewerView(Gtk.Box):
             self._stat_buttons[bucket] = btn
             self._stat_labels[bucket] = label
             dots_box.append(btn)
+        self._dots_box = dots_box
 
         self._state_pill = Gtk.Label()
         self._state_pill.add_css_class("log-state-pill")
@@ -402,6 +403,7 @@ class LogViewerView(Gtk.Box):
         self.add_controller(shortcut_ctrl)
 
         self._update_status_label()
+        self._update_list_stack()
 
     def _build_tag_bar(self) -> Gtk.Box:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -994,6 +996,11 @@ class LogViewerView(Gtk.Box):
         target = "data" if self._entries else "empty"
         if self._list_stack.get_visible_child_name() != target:
             self._list_stack.set_visible_child_name(target)
+        # Hide the filter controls (severity dots + tag chips) on the empty
+        # placeholder — there is nothing to filter until entries arrive.
+        has_entries = target == "data"
+        self._dots_box.set_visible(has_entries)
+        self._tag_bar.set_visible(has_entries)
         # Keep description + button in sync with running state.
         if target == "empty":
             if self._is_running:
