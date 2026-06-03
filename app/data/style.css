@@ -215,8 +215,12 @@ button.tag-clear {
 .log-stat-dot.dot-info    { color: #2190a4; }
 .log-stat-dot.dot-debug   { color: #888888; }
 
-/* Popover tag list */
+/* Popover tag list — make the listbox transparent so it inherits the
+   popover background. By default Gtk.ListBox paints @view_bg_color, which in
+   dark mode is darker than @popover_bg_color and shows as a mismatched panel
+   inside the popover (invisible in light mode, where both are near-white). */
 .tag-popover-list {
+  background-color: transparent;
   border-radius: 6px;
 }
 
