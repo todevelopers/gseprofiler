@@ -412,6 +412,7 @@ class LogViewerView(Gtk.Box):
         self._pin_chip = Gtk.ToggleButton()
         self._pin_chip.add_css_class("tag-chip")
         self._pin_chip.add_css_class("tag-chip-pin")
+        self._pin_chip.add_css_class("flat")
         self._pin_chip.set_visible(False)
         self._pin_chip.set_tooltip_text("Show only logs for the selected extension")
         self._pin_chip.connect("toggled", self._on_pin_chip_toggled)
@@ -669,6 +670,7 @@ class LogViewerView(Gtk.Box):
         for tag, count in inline:
             btn = Gtk.ToggleButton(label=f"{tag} {count}")
             btn.add_css_class("tag-chip")
+            btn.add_css_class("flat")
             btn.add_css_class(_tag_color_class(tag))
             btn.set_tooltip_text(f"Show only [{tag}] entries")
             btn.set_active(tag in self._active_tags)
