@@ -14,6 +14,7 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 from collections import deque
+from collections.abc import Callable
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
@@ -47,10 +48,9 @@ _TAG_PALETTE_CHARS = "0123456789AB"
 _TAG_CSS_CLASSES = tuple(f"tag-c{c}" for c in _TAG_PALETTE_CHARS)
 _LEVEL_PILL_CLASSES = ("lvl-error", "lvl-warn", "lvl-info", "lvl-debug")
 
-# Horizontal overhead added to text width when estimating a flat tag-chip button
-_CHIP_BTN_OVERHEAD = 20
-# Extra width for the icon + inner spacing inside the "+N more" menu button
-_MORE_BTN_ICON_OVERHEAD = 16
+# Spacing (px) between elements in the tag bar. Kept in sync with the tag-bar
+# layout manager so the chip-fitting math matches the real on-screen gaps.
+_TAG_BAR_SPACING = 4
 
 _MSG_TAG_RE = re.compile(r'^(?:JS LOG:\s*)?\[([^\]]+)\]\s*(.*)', re.DOTALL)
 
@@ -141,22 +141,30 @@ class LogRowItem(GObject.Object):
         self.time_str = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
 
 
-class _TagBar(Gtk.Box):
-    """Tag-bar container that fires a callback whenever its allocated width changes.
+class _TagBarLayout(Gtk.BoxLayout):
+    """Horizontal box layout that reports its allocated width on every change.
 
-    GTK4 removed size-allocate as a public signal; overriding do_size_allocate
-    in a Gtk.Box subclass is the idiomatic replacement.
+    GTK4 removed the public size-allocate signal, and in this PyGObject version
+    vfunc overrides such as ``do_size_allocate`` / ``do_measure`` are silently
+    ignored on a ``Gtk.Box`` subclass — only direct ``Gtk.Widget`` subclasses
+    honour them. A custom ``Gtk.LayoutManager`` is the reliable hook: its
+    ``do_allocate`` fires on every allocation with the real width, while the
+    inherited ``Gtk.BoxLayout`` still lays the children out.
     """
 
-    __gtype_name__ = "GseTagBar"
+    __gtype_name__ = "GseTagBarLayout"
 
     def __init__(self) -> None:
-        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        super().__init__(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=_TAG_BAR_SPACING
+        )
         self.on_width_changed: "Callable[[int], None] | None" = None
-        self._last_w: int = 0
+        self._last_w: int = -1
 
-    def do_size_allocate(self, width: int, height: int, baseline: int) -> None:
-        super().do_size_allocate(width, height, baseline)
+    def do_allocate(
+        self, widget: Gtk.Widget, width: int, height: int, baseline: int
+    ) -> None:
+        Gtk.BoxLayout.do_allocate(self, widget, width, height, baseline)
         if width != self._last_w:
             self._last_w = width
             if self.on_width_changed is not None:
@@ -438,11 +446,13 @@ class LogViewerView(Gtk.Box):
         self._update_status_label()
         self._update_list_stack()
 
-    def _build_tag_bar(self) -> _TagBar:
-        bar = _TagBar()
+    def _build_tag_bar(self) -> Gtk.Box:
+        bar = Gtk.Box()
+        self._tag_bar_layout = _TagBarLayout()
+        bar.set_layout_manager(self._tag_bar_layout)
+        self._tag_bar_layout.on_width_changed = self._on_tag_bar_width_changed
         bar.add_css_class("log-tagbar")
         self._tag_bar = bar
-        bar.on_width_changed = self._on_tag_bar_width_changed
 
         # Pin chip — always first; updated when selected extension changes
         self._pin_chip = Gtk.ToggleButton()
@@ -702,15 +712,29 @@ class LogViewerView(Gtk.Box):
         self._pin_chip.set_active(self._pin_tag in self._active_tags)
         self._block_tag_signals = False
 
-    def _chip_natural_width(self, text: str) -> int:
-        """Estimate the natural pixel width of a flat tag-chip button with *text*."""
-        ctx = self._inline_chips_box.get_pango_context()
-        layout = Pango.Layout.new(ctx)
-        layout.set_text(text, -1)
-        w, _ = layout.get_pixel_size()
-        return w + _CHIP_BTN_OVERHEAD
+    @staticmethod
+    def _natural_width(widget: Gtk.Widget) -> int:
+        """Real, CSS-aware natural horizontal size of *widget* in pixels.
+
+        Returns 0 for an invisible widget (GTK measures hidden widgets as 0),
+        so callers that need a hidden widget's size must make it visible first.
+        """
+        return int(widget.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
+
+    def _make_tag_chip(self, tag: str, count: int) -> Gtk.ToggleButton:
+        btn = Gtk.ToggleButton(label=f"{_tag_display(tag)} {count}")
+        btn.add_css_class("tag-chip")
+        btn.add_css_class("flat")
+        btn.add_css_class(_tag_color_class(tag))
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.set_tooltip_text(f"Show only {_tag_display(tag)} entries")
+        btn.set_active(tag in self._active_tags)
+        btn.connect("toggled", self._on_inline_chip_toggled, tag)
+        return btn
 
     def _on_tag_bar_width_changed(self, _width: int) -> None:
+        # Coalesce the burst of allocations during a resize drag into a single
+        # rebuild on the next idle tick.
         if not self._chips_rebuild_pending:
             self._chips_rebuild_pending = True
             GLib.idle_add(self._chips_rebuild_idle)
@@ -721,67 +745,65 @@ class LogViewerView(Gtk.Box):
         return False
 
     def _compute_available_chips_width(self) -> int:
-        """Available pixel width for the inline chip area (bar minus fixed elements)."""
-        bar_w = self._tag_bar.get_width()
-        if bar_w == 0:
+        """Pixel width available for the inline chips + the "+N more" button:
+        the bar's allocated width minus the pin chip, separator and Clear button
+        (each with the gap that surrounds it)."""
+        bar_w = int(self._tag_bar.get_width())
+        if bar_w <= 0:
             return 0
         taken = 0
-        if self._pin_chip.get_visible():
-            taken += self._pin_chip.get_width() + 4
-        if self._pin_sep.get_visible():
-            taken += max(self._pin_sep.get_width(), 1) + 4
-        if self._clear_tags_btn.get_visible():
-            taken += self._clear_tags_btn.get_width() + 4
+        for widget in (self._pin_chip, self._pin_sep, self._clear_tags_btn):
+            if widget.get_visible():
+                taken += self._natural_width(widget) + _TAG_BAR_SPACING
         return max(0, bar_w - taken)
 
     def _rebuild_chips(self) -> None:
-        """Rebuild inline tag chips, fitting as many as the available width allows."""
+        """Rebuild the inline tag chips so they fill the full bar width, only
+        spilling into the "+N more" popover when chips genuinely do not fit."""
         while (child := self._inline_chips_box.get_first_child()):
             self._inline_chips_box.remove(child)
         self._inline_chip_widgets.clear()
 
         sorted_tags = sorted(self._tag_counts.items(), key=lambda x: -x[1])
+        # The pinned extension already has its own dedicated chip.
         filtered = [(t, c) for t, c in sorted_tags if t != self._pin_tag]
 
         available = self._compute_available_chips_width()
-        spacing = 4  # matches Box(spacing=4)
 
-        if available > 0:
-            # Greedily fit chips; each iteration decides whether there is room
-            # for the next chip *plus* the "+N more" button if needed.
-            more_w = (
-                self._chip_natural_width(f"+{len(filtered)} more")
-                + _MORE_BTN_ICON_OVERHEAD
-            )
-            inline: list[tuple[str, int]] = []
-            used = 0
-            for i, (tag, count) in enumerate(filtered):
-                chip_w = self._chip_natural_width(f"{_tag_display(tag)} {count}")
-                gap = spacing if inline else 0
-                remaining = len(filtered) - i - 1
-                overflow_reserve = (spacing + more_w) if remaining > 0 else 0
-                if used + gap + chip_w + overflow_reserve <= available:
-                    inline.append((tag, count))
-                    used += gap + chip_w
-                else:
-                    break
-            overflow = len(filtered) - len(inline)
+        if available <= 0:
+            # Not allocated yet — show everything. The layout manager fires a
+            # width change once the bar is allocated and this runs again to trim.
+            for tag, count in filtered:
+                btn = self._make_tag_chip(tag, count)
+                self._inline_chips_box.append(btn)
+                self._inline_chip_widgets[tag] = btn
+            overflow = 0
         else:
-            # Width not yet known — show up to 4 chips as an initial fallback.
-            inline = filtered[:4]
-            overflow = max(0, len(filtered) - 4)
+            # Reserve room for the "+N more" button, measured while visible
+            # (hidden widgets measure to 0). Size its label for the worst case
+            # since the real overflow count is not known until the loop ends.
+            self._more_btn.set_visible(True)
+            self._more_label.set_label(f"+{max(len(filtered) - 1, 1)} more")
+            more_w = self._natural_width(self._more_btn)
 
-        for tag, count in inline:
-            btn = Gtk.ToggleButton(label=f"{_tag_display(tag)} {count}")
-            btn.add_css_class("tag-chip")
-            btn.add_css_class("flat")
-            btn.add_css_class(_tag_color_class(tag))
-            btn.set_valign(Gtk.Align.CENTER)
-            btn.set_tooltip_text(f"Show only {_tag_display(tag)} entries")
-            btn.set_active(tag in self._active_tags)
-            btn.connect("toggled", self._on_inline_chip_toggled, tag)
-            self._inline_chips_box.append(btn)
-            self._inline_chip_widgets[tag] = btn
+            used = 0
+            shown = 0
+            for i, (tag, count) in enumerate(filtered):
+                btn = self._make_tag_chip(tag, count)
+                self._inline_chips_box.append(btn)  # append first so CSS applies
+                chip_w = self._natural_width(btn)
+                gap = _TAG_BAR_SPACING if shown else 0
+                # Reserve the overflow button only while chips still remain.
+                has_remaining = i < len(filtered) - 1
+                reserve = (_TAG_BAR_SPACING + more_w) if has_remaining else 0
+                if used + gap + chip_w + reserve <= available:
+                    used += gap + chip_w
+                    shown += 1
+                    self._inline_chip_widgets[tag] = btn
+                else:
+                    self._inline_chips_box.remove(btn)
+                    break
+            overflow = len(filtered) - shown
 
         if overflow > 0:
             self._more_label.set_label(f"+{overflow} more")
