@@ -25,6 +25,7 @@ _log = logging.getLogger(__name__)
 MAX_ENTRIES = 5000
 _DEFAULT_CMD = "journalctl --user -f"
 _SETTINGS_KEY = "journal_cmd"
+_WRAP_KEY = "wrap_messages"
 _INVALID_POS = GLib.MAXUINT
 
 # Priority bucket → stat dot identifier. Buckets group the syslog priorities
@@ -179,6 +180,7 @@ class LogViewerView(Gtk.Box):
         settings = _load_settings()
         cmd = settings.get(_SETTINGS_KEY, _DEFAULT_CMD)
         self._journal_cmd: str = cmd if isinstance(cmd, str) else _DEFAULT_CMD
+        self._wrap_messages: bool = bool(settings.get(_WRAP_KEY, False))
 
         # Column-view backing store and selection (multi-select for copy)
         self._store = Gio.ListStore(item_type=LogRowItem)
@@ -235,6 +237,12 @@ class LogViewerView(Gtk.Box):
         self._auto_scroll_btn.set_active(True)
         self._auto_scroll_btn.connect("toggled", self._on_auto_scroll_toggled)
 
+        self._wrap_btn = Gtk.ToggleButton()
+        self._wrap_btn.set_icon_name("view-wrapped-symbolic")
+        self._wrap_btn.set_tooltip_text("Wrap long messages (disables horizontal scroll)")
+        self._wrap_btn.set_active(self._wrap_messages)
+        self._wrap_btn.connect("toggled", self._on_wrap_toggled)
+
         clear_btn = Gtk.Button(icon_name="edit-clear-all-symbolic")
         clear_btn.add_css_class("flat")
         clear_btn.set_tooltip_text("Clear log")
@@ -262,6 +270,7 @@ class LogViewerView(Gtk.Box):
         filter_bar.add_css_class("log-filterbar")
         filter_bar.append(self._search_entry)
         filter_bar.append(self._auto_scroll_btn)
+        filter_bar.append(self._wrap_btn)
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         filter_bar.append(sep)
@@ -364,7 +373,8 @@ class LogViewerView(Gtk.Box):
 
         self._scroll = Gtk.ScrolledWindow()
         self._scroll.set_vexpand(True)
-        self._scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        h_policy = Gtk.PolicyType.NEVER if self._wrap_messages else Gtk.PolicyType.AUTOMATIC
+        self._scroll.set_policy(h_policy, Gtk.PolicyType.AUTOMATIC)
         self._scroll.set_size_request(0, -1)
         self._scroll.set_child(col_view)
 
@@ -576,7 +586,6 @@ class LogViewerView(Gtk.Box):
         label = Gtk.Label()
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("log-message")
         list_item.set_child(self._make_cell_box(label))
 
@@ -585,6 +594,13 @@ class LogViewerView(Gtk.Box):
         box: Gtk.Box = list_item.get_child()
         label: Gtk.Label = box.get_first_child()
         label.set_label(item.body)
+        if self._wrap_messages:
+            label.set_wrap(True)
+            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            label.set_ellipsize(Pango.EllipsizeMode.NONE)
+        else:
+            label.set_wrap(False)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
         self._apply_cell_tint(box, item.bucket)
 
     # ── Command bar handlers ───────────────────────────────────────────────
@@ -625,7 +641,9 @@ class LogViewerView(Gtk.Box):
 
     def _on_cmd_changed(self, entry: Gtk.Entry) -> None:
         self._journal_cmd = entry.get_text()
-        _save_settings({_SETTINGS_KEY: self._journal_cmd})
+        settings = _load_settings()
+        settings[_SETTINGS_KEY] = self._journal_cmd
+        _save_settings(settings)
 
     def _on_start_stop(self, _btn: Gtk.Button) -> None:
         if self._is_running:
@@ -824,6 +842,18 @@ class LogViewerView(Gtk.Box):
         self._auto_scroll = btn.get_active()
         if self._auto_scroll:
             self._scroll_to_end()
+
+    def _on_wrap_toggled(self, btn: Gtk.ToggleButton) -> None:
+        self._wrap_messages = btn.get_active()
+        settings = _load_settings()
+        settings[_WRAP_KEY] = self._wrap_messages
+        _save_settings(settings)
+        self._apply_wrap_policy()
+        self._rebuild_view()
+
+    def _apply_wrap_policy(self) -> None:
+        h_policy = Gtk.PolicyType.NEVER if self._wrap_messages else Gtk.PolicyType.AUTOMATIC
+        self._scroll.set_policy(h_policy, Gtk.PolicyType.AUTOMATIC)
 
     def _on_stat_dot_toggled(self, btn: Gtk.ToggleButton, bucket: str) -> None:
         if btn.get_active():
