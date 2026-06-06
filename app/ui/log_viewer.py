@@ -593,8 +593,11 @@ class LogViewerView(Gtk.Box):
         label.set_label(item.body)
         if self._wrap_messages:
             # FILL + hexpand lets the label fill the column width so wrap fires.
+            # xalign=0.0 is required — default 0.5 would center each wrapped line.
             label.set_halign(Gtk.Align.FILL)
             label.set_hexpand(True)
+            label.set_xalign(0.0)
+            label.set_valign(Gtk.Align.START)
             label.set_wrap(True)
             label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             label.set_ellipsize(Pango.EllipsizeMode.NONE)
@@ -854,6 +857,8 @@ class LogViewerView(Gtk.Box):
         _save_settings(settings)
         self._apply_wrap_policy()
         self._rebuild_view()
+        # Force GTK to recompute per-row heights after wrap mode changes.
+        self._col_view.queue_resize()
 
     def _apply_wrap_policy(self) -> None:
         if self._wrap_messages:
