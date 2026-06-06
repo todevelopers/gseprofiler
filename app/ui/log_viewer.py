@@ -47,8 +47,10 @@ _TAG_PALETTE_CHARS = "0123456789AB"
 _TAG_CSS_CLASSES = tuple(f"tag-c{c}" for c in _TAG_PALETTE_CHARS)
 _LEVEL_PILL_CLASSES = ("lvl-error", "lvl-warn", "lvl-info", "lvl-debug")
 
-# Max tag chips shown inline in the tag bar (excluding the pin chip)
-_INLINE_TAG_CHIPS = 4
+# Horizontal overhead added to text width when estimating a flat tag-chip button
+_CHIP_BTN_OVERHEAD = 20
+# Extra width for the icon + inner spacing inside the "+N more" menu button
+_MORE_BTN_ICON_OVERHEAD = 16
 
 _MSG_TAG_RE = re.compile(r'^(?:JS LOG:\s*)?\[([^\]]+)\]\s*(.*)', re.DOTALL)
 
@@ -139,6 +141,28 @@ class LogRowItem(GObject.Object):
         self.time_str = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
 
 
+class _TagBar(Gtk.Box):
+    """Tag-bar container that fires a callback whenever its allocated width changes.
+
+    GTK4 removed size-allocate as a public signal; overriding do_size_allocate
+    in a Gtk.Box subclass is the idiomatic replacement.
+    """
+
+    __gtype_name__ = "GseTagBar"
+
+    def __init__(self) -> None:
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.on_width_changed: "Callable[[int], None] | None" = None
+        self._last_w: int = 0
+
+    def do_size_allocate(self, width: int, height: int, baseline: int) -> None:
+        super().do_size_allocate(width, height, baseline)
+        if width != self._last_w:
+            self._last_w = width
+            if self.on_width_changed is not None:
+                self.on_width_changed(width)
+
+
 class LogViewerView(Gtk.Box):
     """Live journalctl log viewer with structured column-view rendering."""
 
@@ -159,6 +183,8 @@ class LogViewerView(Gtk.Box):
 
         # Guards against cascading signal handlers when updating chip UI state
         self._block_tag_signals = False
+
+        self._chips_rebuild_pending: bool = False
 
         # Chip widget registries (populated by _rebuild_chips / _rebuild_popover)
         self._inline_chip_widgets: dict[str, Gtk.ToggleButton] = {}
@@ -412,10 +438,11 @@ class LogViewerView(Gtk.Box):
         self._update_status_label()
         self._update_list_stack()
 
-    def _build_tag_bar(self) -> Gtk.Box:
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    def _build_tag_bar(self) -> _TagBar:
+        bar = _TagBar()
         bar.add_css_class("log-tagbar")
         self._tag_bar = bar
+        bar.on_width_changed = self._on_tag_bar_width_changed
 
         # Pin chip — always first; updated when selected extension changes
         self._pin_chip = Gtk.ToggleButton()
@@ -675,17 +702,74 @@ class LogViewerView(Gtk.Box):
         self._pin_chip.set_active(self._pin_tag in self._active_tags)
         self._block_tag_signals = False
 
+    def _chip_natural_width(self, text: str) -> int:
+        """Estimate the natural pixel width of a flat tag-chip button with *text*."""
+        ctx = self._inline_chips_box.get_pango_context()
+        layout = Pango.Layout.new(ctx)
+        layout.set_text(text, -1)
+        w, _ = layout.get_pixel_size()
+        return w + _CHIP_BTN_OVERHEAD
+
+    def _on_tag_bar_width_changed(self, _width: int) -> None:
+        if not self._chips_rebuild_pending:
+            self._chips_rebuild_pending = True
+            GLib.idle_add(self._chips_rebuild_idle)
+
+    def _chips_rebuild_idle(self) -> bool:
+        self._chips_rebuild_pending = False
+        self._rebuild_chips()
+        return False
+
+    def _compute_available_chips_width(self) -> int:
+        """Available pixel width for the inline chip area (bar minus fixed elements)."""
+        bar_w = self._tag_bar.get_width()
+        if bar_w == 0:
+            return 0
+        taken = 0
+        if self._pin_chip.get_visible():
+            taken += self._pin_chip.get_width() + 4
+        if self._pin_sep.get_visible():
+            taken += max(self._pin_sep.get_width(), 1) + 4
+        if self._clear_tags_btn.get_visible():
+            taken += self._clear_tags_btn.get_width() + 4
+        return max(0, bar_w - taken)
+
     def _rebuild_chips(self) -> None:
-        """Rebuild the inline tag chips from the current tag counts."""
+        """Rebuild inline tag chips, fitting as many as the available width allows."""
         while (child := self._inline_chips_box.get_first_child()):
             self._inline_chips_box.remove(child)
         self._inline_chip_widgets.clear()
 
         sorted_tags = sorted(self._tag_counts.items(), key=lambda x: -x[1])
-        # Exclude the pinned extension's tag — it already has a dedicated chip
         filtered = [(t, c) for t, c in sorted_tags if t != self._pin_tag]
-        inline = filtered[:_INLINE_TAG_CHIPS]
-        overflow = max(0, len(filtered) - _INLINE_TAG_CHIPS)
+
+        available = self._compute_available_chips_width()
+        spacing = 4  # matches Box(spacing=4)
+
+        if available > 0:
+            # Greedily fit chips; each iteration decides whether there is room
+            # for the next chip *plus* the "+N more" button if needed.
+            more_w = (
+                self._chip_natural_width(f"+{len(filtered)} more")
+                + _MORE_BTN_ICON_OVERHEAD
+            )
+            inline: list[tuple[str, int]] = []
+            used = 0
+            for i, (tag, count) in enumerate(filtered):
+                chip_w = self._chip_natural_width(f"{_tag_display(tag)} {count}")
+                gap = spacing if inline else 0
+                remaining = len(filtered) - i - 1
+                overflow_reserve = (spacing + more_w) if remaining > 0 else 0
+                if used + gap + chip_w + overflow_reserve <= available:
+                    inline.append((tag, count))
+                    used += gap + chip_w
+                else:
+                    break
+            overflow = len(filtered) - len(inline)
+        else:
+            # Width not yet known — show up to 4 chips as an initial fallback.
+            inline = filtered[:4]
+            overflow = max(0, len(filtered) - 4)
 
         for tag, count in inline:
             btn = Gtk.ToggleButton(label=f"{_tag_display(tag)} {count}")
