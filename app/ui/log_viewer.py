@@ -367,16 +367,15 @@ class LogViewerView(Gtk.Box):
         msg_fac.connect("setup", self._msg_setup)
         msg_fac.connect("bind", self._msg_bind)
         msg_col = Gtk.ColumnViewColumn(title="MESSAGE", factory=msg_fac)
-        msg_col.set_expand(True)
         msg_col.set_resizable(True)
         col_view.append_column(msg_col)
+        self._msg_col = msg_col
 
         self._scroll = Gtk.ScrolledWindow()
         self._scroll.set_vexpand(True)
-        h_policy = Gtk.PolicyType.NEVER if self._wrap_messages else Gtk.PolicyType.AUTOMATIC
-        self._scroll.set_policy(h_policy, Gtk.PolicyType.AUTOMATIC)
         self._scroll.set_size_request(0, -1)
         self._scroll.set_child(col_view)
+        self._apply_wrap_policy()
 
         # ── Empty-state stack (wraps the list) ─────────────────────────────
         self._empty_page = Adw.StatusPage()
@@ -584,8 +583,6 @@ class LogViewerView(Gtk.Box):
 
     def _msg_setup(self, _fac: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
         label = Gtk.Label()
-        label.set_halign(Gtk.Align.START)
-        label.set_hexpand(True)
         label.add_css_class("log-message")
         list_item.set_child(self._make_cell_box(label))
 
@@ -595,12 +592,19 @@ class LogViewerView(Gtk.Box):
         label: Gtk.Label = box.get_first_child()
         label.set_label(item.body)
         if self._wrap_messages:
+            # FILL + hexpand lets the label fill the column width so wrap fires.
+            label.set_halign(Gtk.Align.FILL)
+            label.set_hexpand(True)
             label.set_wrap(True)
             label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             label.set_ellipsize(Pango.EllipsizeMode.NONE)
         else:
+            # No ellipsize — label reports its full natural width so the
+            # column (expand=False) is sized to content → horizontal scroll.
+            label.set_halign(Gtk.Align.START)
+            label.set_hexpand(False)
             label.set_wrap(False)
-            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_ellipsize(Pango.EllipsizeMode.NONE)
         self._apply_cell_tint(box, item.bucket)
 
     # ── Command bar handlers ───────────────────────────────────────────────
@@ -852,8 +856,15 @@ class LogViewerView(Gtk.Box):
         self._rebuild_view()
 
     def _apply_wrap_policy(self) -> None:
-        h_policy = Gtk.PolicyType.NEVER if self._wrap_messages else Gtk.PolicyType.AUTOMATIC
-        self._scroll.set_policy(h_policy, Gtk.PolicyType.AUTOMATIC)
+        if self._wrap_messages:
+            # Column expands to fill viewport; labels wrap within it.
+            self._msg_col.set_expand(True)
+            self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        else:
+            # Column sizes to cell content (no ellipsize → natural = text width)
+            # so content can overflow the viewport and trigger horizontal scroll.
+            self._msg_col.set_expand(False)
+            self._scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
     def _on_stat_dot_toggled(self, btn: Gtk.ToggleButton, bucket: str) -> None:
         if btn.get_active():
