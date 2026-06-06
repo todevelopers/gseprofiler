@@ -31,6 +31,13 @@ APP_ID = "io.github.todevelopers.GseProfiler"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _BASE_VERSION = "1.0.1"
 
+# Window sizing. Below the minimum the packed toolbars (the 4-tab WIDE view
+# switcher and the log-viewer filter row) hit their own minimums and the layout
+# starts reflowing/jittering, so the compositor is told not to allow the window
+# to shrink past this threshold.
+_DEFAULT_WINDOW_SIZE = (1200, 760)
+_MIN_WINDOW_SIZE = (915, 560)
+
 
 def _compute_version() -> str:
     # Inside a Flatpak sandbox there is no git repo — return the baked-in version.
@@ -95,7 +102,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._active_uuid: str | None = None
         self._last_extensions: dict[str, Any] = {}
         self.set_title("GSE Profiler")
-        self.set_default_size(1200, 760)
+        self.set_default_size(*_DEFAULT_WINDOW_SIZE)
+        # Enforce a minimum size so the window cannot be shrunk into the range
+        # where the toolbars clamp and the UI starts jittering.
+        self.set_size_request(*_MIN_WINDOW_SIZE)
         self._register_actions()
         self._build_ui()
         self._update_bridge_actions()
