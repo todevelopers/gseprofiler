@@ -111,8 +111,15 @@ def _extract_log_tag(message: str) -> tuple[str | None, str]:
 
 
 def _entry_tag(entry: LogEntry) -> str:
+    """Attribute an entry to a tag, most-specific first: an explicit ``[tag]``
+    message prefix, then GLIB_DOMAIN (set by console.* / GLib.log_structured),
+    then the syslog identifier."""
     tag, _ = _extract_log_tag(entry.message)
-    return tag if tag else entry.identifier
+    if tag:
+        return tag
+    if entry.glib_domain:
+        return entry.glib_domain
+    return entry.identifier
 
 
 def _settings_path() -> Path:
@@ -146,8 +153,8 @@ class LogRowItem(GObject.Object):
     def __init__(self, entry: LogEntry) -> None:
         super().__init__()
         self.entry = entry
-        tag, body = _extract_log_tag(entry.message)
-        self.tag = tag if tag else entry.identifier
+        _, body = _extract_log_tag(entry.message)
+        self.tag = _entry_tag(entry)
         self.body = body
         self.bucket = _priority_bucket(entry.priority)
         self.time_str = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]

@@ -202,6 +202,7 @@ class LogEntry:
     priority: int
     priority_name: str
     identifier: str
+    glib_domain: str
     message: str
     raw: dict[str, Any]
 
@@ -354,11 +355,18 @@ class JournalReader(GObject.Object):
         if isinstance(identifier, bytes):
             identifier = identifier.decode("utf-8", errors="replace")
 
+        # GLIB_DOMAIN carries the extension identity when a developer logs via
+        # console.* or GLib.log_structured with a custom domain.
+        domain = entry.get("GLIB_DOMAIN", "")
+        if isinstance(domain, bytes):
+            domain = domain.decode("utf-8", errors="replace")
+
         return LogEntry(
             timestamp=timestamp,
             priority=priority,
             priority_name=PRIORITY_NAMES.get(priority, "INFO"),
             identifier=str(identifier),
+            glib_domain=str(domain),
             message=str(message),
             raw=dict(entry),
         )

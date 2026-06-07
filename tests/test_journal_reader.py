@@ -160,6 +160,7 @@ def test_parse_entry_basic():
         "__REALTIME_TIMESTAMP": datetime(2024, 1, 1, 12, 0, 0),
         "PRIORITY": 6,
         "SYSLOG_IDENTIFIER": "gnome-shell",
+        "GLIB_DOMAIN": "my-extension",
         "MESSAGE": "Extension loaded",
         "__CURSOR": "s=abc123",
     }
@@ -168,8 +169,23 @@ def test_parse_entry_basic():
     assert result.priority == 6
     assert result.priority_name == "INFO"
     assert result.identifier == "gnome-shell"
+    assert result.glib_domain == "my-extension"
     assert result.message == "Extension loaded"
     assert result.raw["__CURSOR"] == "s=abc123"
+
+
+def test_parse_entry_glib_domain_defaults_empty():
+    reader = _make_reader()
+    result = reader._parse_entry({"MESSAGE": "x"})
+    assert result is not None
+    assert result.glib_domain == ""
+
+
+def test_parse_entry_glib_domain_bytes():
+    reader = _make_reader()
+    result = reader._parse_entry({"GLIB_DOMAIN": b"dom", "MESSAGE": "x"})
+    assert result is not None
+    assert result.glib_domain == "dom"
 
 
 def test_parse_entry_bytes_message_and_identifier():

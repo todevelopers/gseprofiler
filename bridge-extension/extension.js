@@ -1,5 +1,6 @@
 'use strict';
 
+import GLib from 'gi://GLib';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { SocketClient } from './socket_client.js';
 import { Profiler } from './profiler.js';
@@ -9,6 +10,14 @@ const DEBUG = false;
 function _dbg(...args) { if (DEBUG) { log(...args); } }
 
 const COMPANION_UUID = 'gse-profiler-bridge@todevelopers';
+const LOG_DOMAIN = 'gse-profiler-bridge';
+
+// Log via GLib.log_structured so the entry carries GLIB_DOMAIN; the app
+// attributes it to this extension without a textual "[name]" prefix. This is
+// the recommended logging pattern for extensions that want their logs grouped.
+function _log(message) {
+    GLib.log_structured(LOG_DOMAIN, GLib.LogLevelFlags.LEVEL_MESSAGE, { MESSAGE: message });
+}
 
 export default class GSEProfilerBridge extends Extension {
     /** @type {SocketClient | null} */
@@ -21,7 +30,7 @@ export default class GSEProfilerBridge extends Extension {
     _inspector = null;
 
     enable() {
-        log('[gse-profiler-bridge] Enabled');
+        _log('Enabled');
 
         this._profiler = new Profiler(event => {
             this._socketClient?.send(event);
@@ -34,7 +43,7 @@ export default class GSEProfilerBridge extends Extension {
     }
 
     disable() {
-        log('[gse-profiler-bridge] Disabled');
+        _log('Disabled');
 
         if (this._profiler) {
             this._profiler.stopProfiling();
@@ -74,7 +83,7 @@ export default class GSEProfilerBridge extends Extension {
             break;
         }
         default:
-            log(`[gse-profiler-bridge] unhandled message type: ${msg.type}`);
+            _log(`unhandled message type: ${msg.type}`);
         }
     }
 }
