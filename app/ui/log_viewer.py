@@ -430,8 +430,10 @@ class LogViewerView(Gtk.Box):
         self._list_stack.set_visible_child_name("empty")
 
         self.append(filter_bar)
-        self.append(tag_bar)
+        # Capture source reveals directly under the search/run row (its toggle
+        # lives there); the tag filter sits below it.
         self.append(self._cmd_revealer)
+        self.append(tag_bar)
         self.append(status_bar)
         self.append(self._list_stack)
 
@@ -633,25 +635,26 @@ class LogViewerView(Gtk.Box):
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         panel.add_css_class("log-cmdbar")
 
-        # Row 1 — journal scope + boot
-        row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row1.append(Gtk.Label(label="Scope:"))
+        # Main row — scope, boot, source preset and custom value on one line.
+        main = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        main.append(Gtk.Label(label="Scope:"))
         self._scope_dd = Gtk.DropDown.new_from_strings(["User", "System", "Both"])
         self._scope_dd.set_tooltip_text(
             "Which journal to read (--user / --system / both)"
         )
         self._scope_dd.connect("notify::selected", self._on_scope_changed)
-        row1.append(self._scope_dd)
+        main.append(self._scope_dd)
 
         self._boot_check = Gtk.CheckButton(label="This boot only")
         self._boot_check.set_tooltip_text("Limit to the current boot (-b)")
         self._boot_check.connect("toggled", self._on_boot_toggled)
-        row1.append(self._boot_check)
-        panel.append(row1)
+        main.append(self._boot_check)
 
-        # Row 2 — source preset + custom value
-        row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row2.append(Gtk.Label(label="Logs from:"))
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        main.append(sep)
+
+        from_lbl = Gtk.Label(label="Logs from:")
+        main.append(from_lbl)
         self._source_dd = Gtk.DropDown.new_from_strings(
             ["GNOME Shell", "Everything", "Custom unit…", "Custom identifier…"]
         )
@@ -660,16 +663,16 @@ class LogViewerView(Gtk.Box):
             "the gnome-shell process"
         )
         self._source_dd.connect("notify::selected", self._on_source_changed)
-        row2.append(self._source_dd)
+        main.append(self._source_dd)
 
         self._source_value_entry = Gtk.Entry()
         self._source_value_entry.set_hexpand(True)
         self._source_value_entry.set_placeholder_text("e.g. gnome-shell.service")
         self._source_value_entry.connect("changed", self._on_source_value_changed)
-        row2.append(self._source_value_entry)
-        panel.append(row2)
+        main.append(self._source_value_entry)
+        panel.append(main)
 
-        # Row 3 — Advanced: priority + raw override
+        # Advanced — priority + raw override
         adv = Gtk.Expander(label="Advanced")
         adv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         adv_box.set_margin_top(8)
