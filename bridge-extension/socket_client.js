@@ -2,6 +2,7 @@
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import { bridgeLog, bridgeLogError } from './logger.js';
 
 const SOCKET_SUBDIR = 'gse-profiler';
 const SOCKET_NAME = 'gse-profiler.sock';
@@ -84,7 +85,7 @@ export class SocketClient {
             const bytes = this.#encoder.encode(line);
             this.#outputStream.write_all(bytes, null);
         } catch (e) {
-            logError(e, '[gse-profiler-bridge] socket send failed');
+            bridgeLogError(e, 'socket send failed');
         }
     }
 
@@ -116,7 +117,7 @@ export class SocketClient {
 
     #doConnect() {
         const path = _socketPath();
-        log(`[gse-profiler-bridge] socket connect attempt: ${path}`);
+        bridgeLog(`socket connect attempt: ${path}`);
         const addr = Gio.UnixSocketAddress.new(path);
         const client = new Gio.SocketClient();
         client.connect_async(addr, null, (obj, result) => {
@@ -124,7 +125,7 @@ export class SocketClient {
                 const conn = obj.connect_finish(result);
                 this.#onConnected(conn);
             } catch (e) {
-                log(`[gse-profiler-bridge] socket connect failed: ${e.message}`);
+                bridgeLog(`socket connect failed: ${e.message}`);
                 if (!this.#stopping) {
                     this.#scheduleConnect(RECONNECT_DELAY_MS);
                 }
@@ -133,7 +134,7 @@ export class SocketClient {
     }
 
     #onConnected(connection) {
-        log(`[gse-profiler-bridge] socket connected: ${_socketPath()}`);
+        bridgeLog(`socket connected: ${_socketPath()}`);
         this.#connection = connection;
         this.#connected = true;
         this.#cancellable = Gio.Cancellable.new();
@@ -175,7 +176,7 @@ export class SocketClient {
                         this.#onMessage(msg);
                     }
                 } catch (_e) {
-                    log(`[gse-profiler-bridge] invalid JSON from app: ${trimmed}`);
+                    bridgeLog(`invalid JSON from app: ${trimmed}`);
                 }
             }
             this.#readNextLine(stream);
@@ -183,13 +184,13 @@ export class SocketClient {
     }
 
     #onDisconnected() {
-        log('[gse-profiler-bridge] socket disconnected');
+        bridgeLog('socket disconnected');
         this.#connected = false;
         this.#connection = null;
         this.#outputStream = null;
         this.#cancellable = null;
         if (!this.#stopping) {
-            log(`[gse-profiler-bridge] reconnecting in ${RECONNECT_DELAY_MS}ms`);
+            bridgeLog(`reconnecting in ${RECONNECT_DELAY_MS}ms`);
             this.#scheduleConnect(RECONNECT_DELAY_MS);
         }
     }
