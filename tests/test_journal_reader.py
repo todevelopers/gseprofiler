@@ -7,6 +7,7 @@ absent.
 
 import os
 import sys
+from dataclasses import asdict
 from datetime import datetime
 
 import pytest
@@ -60,6 +61,88 @@ def test_parse_extra_args_preserves_passthrough_flags():
     from app.core.journal_reader import parse_extra_args
     result = parse_extra_args("journalctl --user -t gnome-shell --boot -p 3")
     assert result == ["--user", "-t", "gnome-shell", "--boot", "-p", "3"]
+
+
+# ── build_journal_cmd (no systemd needed) ────────────────────────────────────
+
+def test_build_journal_cmd_default_is_gnome_shell_capture():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    assert build_journal_cmd(CaptureSpec()) == "journalctl --user -b -t gnome-shell"
+
+
+def test_build_journal_cmd_scope_variants():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    assert build_journal_cmd(CaptureSpec(scope="system")) == "journalctl --system -b -t gnome-shell"
+    # "both" omits scope flags (reader reads both journals by default)
+    assert build_journal_cmd(CaptureSpec(scope="both")) == "journalctl -b -t gnome-shell"
+
+
+def test_build_journal_cmd_source_all_and_no_boot():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    assert build_journal_cmd(CaptureSpec(this_boot=False, source="all")) == "journalctl --user"
+
+
+def test_build_journal_cmd_custom_unit_and_priority():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    spec = CaptureSpec(source="unit", source_value="dbus.service", min_priority=3)
+    assert build_journal_cmd(spec) == "journalctl --user -b -u dbus.service -p 3"
+
+
+def test_build_journal_cmd_custom_identifier():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    spec = CaptureSpec(source="identifier", source_value="myext")
+    assert build_journal_cmd(spec) == "journalctl --user -b -t myext"
+
+
+def test_build_journal_cmd_custom_source_blank_value_omitted():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    assert build_journal_cmd(CaptureSpec(source="unit", source_value="")) == "journalctl --user -b"
+
+
+def test_build_journal_cmd_raw_override_wins():
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd
+    spec = CaptureSpec(raw_override=True, raw_text="journalctl -f custom")
+    assert build_journal_cmd(spec) == "journalctl -f custom"
+
+
+def test_build_journal_cmd_roundtrips_through_parse_extra_args():
+    """The generated command must survive parse_extra_args unchanged (minus the
+    journalctl prefix)."""
+    from app.core.journal_reader import CaptureSpec, build_journal_cmd, parse_extra_args
+    cmd = build_journal_cmd(CaptureSpec())
+    assert parse_extra_args(cmd) == ["--user", "-b", "-t", "gnome-shell"]
+
+
+# ── capture_from_settings (migration, no systemd needed) ─────────────────────
+
+def test_capture_from_settings_empty_is_default():
+    from app.core.journal_reader import CaptureSpec, capture_from_settings
+    assert capture_from_settings({}) == CaptureSpec()
+
+
+def test_capture_from_settings_upgrades_legacy_default():
+    """Existing users on the old free-text default get the new structured one."""
+    from app.core.journal_reader import CaptureSpec, capture_from_settings
+    assert capture_from_settings({"journal_cmd": "journalctl --user -f"}) == CaptureSpec()
+
+
+def test_capture_from_settings_preserves_legacy_custom_as_raw():
+    from app.core.journal_reader import capture_from_settings
+    spec = capture_from_settings({"journal_cmd": "journalctl -u sshd.service"})
+    assert spec.raw_override is True
+    assert spec.raw_text == "journalctl -u sshd.service"
+
+
+def test_capture_from_settings_roundtrips_capture_dict():
+    from app.core.journal_reader import CaptureSpec, capture_from_settings
+    spec = CaptureSpec(scope="both", source="unit", source_value="x.service", min_priority=4)
+    assert capture_from_settings({"capture": asdict(spec)}) == spec
+
+
+def test_capture_from_settings_ignores_unknown_keys():
+    from app.core.journal_reader import CaptureSpec, capture_from_settings
+    spec = capture_from_settings({"capture": {"scope": "system", "bogus": 1}})
+    assert spec == CaptureSpec(scope="system")
 
 
 # ── _parse_entry (no systemd needed) ─────────────────────────────────────────

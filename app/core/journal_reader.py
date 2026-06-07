@@ -1,7 +1,7 @@
 import logging
 import shlex
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Any
 
@@ -65,6 +65,78 @@ def parse_extra_args(cmd_str: str) -> list[str]:
         result.append(part)
 
     return result
+
+
+# Legacy free-text default, kept only so pre-structured settings can be migrated.
+_LEGACY_DEFAULT_CMD = "journalctl --user -f"
+
+
+@dataclass
+class CaptureSpec:
+    """Structured description of what to pull from the journal.
+
+    This is the *capture* layer (analogous to a Wireshark capture filter): it
+    controls which entries the reader pulls from the journal. Live narrowing of
+    already-captured entries (search, severity, tags) is a separate display
+    layer in the log viewer. ``build_journal_cmd`` renders this spec to a
+    journalctl-compatible command string consumed by ``parse_extra_args``, so
+    the reader pipeline stays unchanged.
+    """
+
+    scope: str = "user"              # "user" | "system" | "both"
+    this_boot: bool = True           # -b
+    source: str = "gnome-shell"      # "gnome-shell" | "all" | "unit" | "identifier"
+    source_value: str = ""           # unit / identifier value for custom sources
+    min_priority: int | None = None  # -p N (None = no priority cap)
+    raw_override: bool = False        # power-user escape hatch
+    raw_text: str = ""               # verbatim journalctl command when overriding
+
+
+def build_journal_cmd(spec: CaptureSpec) -> str:
+    """Render a :class:`CaptureSpec` to a journalctl-compatible command string."""
+    if spec.raw_override:
+        return spec.raw_text.strip()
+    parts = ["journalctl"]
+    if spec.scope == "user":
+        parts.append("--user")
+    elif spec.scope == "system":
+        parts.append("--system")
+    # "both" → omit scope flags; the reader reads both journals by default.
+    if spec.this_boot:
+        parts.append("-b")
+    if spec.source == "gnome-shell":
+        parts += ["-t", "gnome-shell"]
+    elif spec.source == "unit" and spec.source_value.strip():
+        parts += ["-u", spec.source_value.strip()]
+    elif spec.source == "identifier" and spec.source_value.strip():
+        parts += ["-t", spec.source_value.strip()]
+    # "all" → no source match.
+    if spec.min_priority is not None:
+        parts += ["-p", str(spec.min_priority)]
+    return shlex.join(parts)
+
+
+def capture_from_settings(settings: dict) -> CaptureSpec:
+    """Build a :class:`CaptureSpec` from persisted settings, migrating old formats.
+
+    - A new ``capture`` dict is loaded directly.
+    - A legacy ``journal_cmd`` equal to the old default is upgraded to the new
+      structured default, so existing users get the gnome-shell capture after
+      updating instead of being stuck on the old ``--user -f``.
+    - Any other legacy ``journal_cmd`` (a user customisation) is preserved
+      verbatim as a raw override, so power users keep their command.
+    """
+    cap = settings.get("capture")
+    if isinstance(cap, dict):
+        allowed = {f.name for f in fields(CaptureSpec)}
+        try:
+            return CaptureSpec(**{k: v for k, v in cap.items() if k in allowed})
+        except TypeError:
+            pass
+    legacy = settings.get("journal_cmd")
+    if isinstance(legacy, str) and legacy.strip() and legacy.strip() != _LEGACY_DEFAULT_CMD:
+        return CaptureSpec(raw_override=True, raw_text=legacy.strip())
+    return CaptureSpec()
 
 
 def _reader_flags(extra_args: list[str]) -> int:
