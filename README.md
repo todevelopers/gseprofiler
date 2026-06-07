@@ -25,7 +25,7 @@ browse properties, see current values, and drill into nested objects on the fly.
 | Feature               | Description                                                                                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Extension Manager** | Browse all installed extensions with status, enable/disable with one click, open the source folder directly                                                 |
-| **Log Viewer**        | Live systemd journal stream scoped to a single extension UUID; journalctl-compatible filter syntax (`--user`, `-t`, `-u`, `-b`, `-p`); filter by log level and search full-text in real time |
+| **Log Viewer**        | Live systemd journal stream — captures the `gnome-shell` process by default (where all extensions run); structured capture controls (scope, boot, source preset, priority) with a power-user raw `journalctl` override; filter by log level, extension tag, and full-text search in real time |
 | **Profiler**          | Monkey-patch any extension at runtime. No code changes needed. Visualise timing as a flamegraph, swimlane, or histogram; export and reload sessions as JSON |
 | **Inspector**         | Inspect a live extension object: browse its properties and methods, see current values, and call methods interactively                                      |
 

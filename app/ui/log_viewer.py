@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -19,14 +20,25 @@ from collections.abc import Callable
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient
-from app.core.journal_reader import JournalReader, LogEntry, parse_extra_args
+from app.core.journal_reader import (
+    CaptureSpec,
+    JournalReader,
+    LogEntry,
+    build_journal_cmd,
+    capture_from_settings,
+    parse_extra_args,
+)
 
 _log = logging.getLogger(__name__)
 
 MAX_ENTRIES = 5000
-_DEFAULT_CMD = "journalctl --user -f"
-_SETTINGS_KEY = "journal_cmd"
+_CAPTURE_KEY = "capture"
 _INVALID_POS = GLib.MAXUINT
+
+# Capture-panel control mappings: dropdown index ↔ CaptureSpec value.
+_SCOPE_BY_INDEX = ("user", "system", "both")
+_SOURCE_BY_INDEX = ("gnome-shell", "all", "unit", "identifier")
+_PRIORITY_BY_INDEX: tuple[int | None, ...] = (None, 3, 4, 6)
 
 # Priority bucket → stat dot identifier. Buckets group the syslog priorities
 # into four user-friendly severities.
@@ -191,6 +203,8 @@ class LogViewerView(Gtk.Box):
 
         # Guards against cascading signal handlers when updating chip UI state
         self._block_tag_signals = False
+        # Same idea for the capture-panel controls (sync spec → widgets).
+        self._block_capture_signals = False
 
         self._chips_rebuild_pending: bool = False
 
@@ -210,9 +224,9 @@ class LogViewerView(Gtk.Box):
         self._stat_buttons: dict[str, Gtk.ToggleButton] = {}
         self._stat_labels: dict[str, Gtk.Label] = {}
 
-        settings = _load_settings()
-        cmd = settings.get(_SETTINGS_KEY, _DEFAULT_CMD)
-        self._journal_cmd: str = cmd if isinstance(cmd, str) else _DEFAULT_CMD
+        # Capture spec drives what the reader pulls from the journal. Loaded
+        # from settings, migrating any pre-structured "journal_cmd" value.
+        self._capture: CaptureSpec = capture_from_settings(_load_settings())
 
         # Column-view backing store and selection (multi-select for copy)
         self._store = Gio.ListStore(item_type=LogRowItem)
@@ -226,36 +240,22 @@ class LogViewerView(Gtk.Box):
     # ── UI construction ────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # ── Command bar ─────────────────────────────────────────────────────
-        cmd_label = Gtk.Label(label="Command:")
-
-        self._cmd_entry = Gtk.Entry()
-        self._cmd_entry.set_text(self._journal_cmd)
-        self._cmd_entry.set_hexpand(True)
-        self._cmd_entry.set_placeholder_text("journalctl --user -f")
-        self._cmd_entry.set_tooltip_text(
-            "journalctl-compatible filter — supported flags: --user, --system, "
-            "-t/--identifier, -u/--unit, -b/--boot, -p/--priority; "
-            "--follow/-f and -o/-n/--after-cursor are ignored (managed internally)"
-        )
-        self._cmd_entry.connect("activate", self._on_cmd_activate)
-        self._cmd_entry.connect("changed", self._on_cmd_changed)
-
+        # ── Start/Stop button (lives in the filter bar, drives the reader) ──
         self._start_stop_btn = Gtk.Button()
         self._start_stop_btn.add_css_class("suggested-action")
         self._start_stop_btn.set_tooltip_text("Start reading the journal")
         self._start_stop_btn.connect("clicked", self._on_start_stop)
-        self._set_start_stop_state(running=False)
 
-        cmd_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        cmd_bar.add_css_class("log-cmdbar")
-        cmd_bar.append(cmd_label)
-        cmd_bar.append(self._cmd_entry)
+        # ── Capture panel ("Source") — what the reader pulls from the journal.
+        # This is the capture layer; the search/severity/tag controls below are
+        # the live display layer over what was captured.
+        capture_panel = self._build_capture_panel()
+        self._set_start_stop_state(running=False)
 
         self._cmd_revealer = Gtk.Revealer()
         self._cmd_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self._cmd_revealer.set_reveal_child(False)
-        self._cmd_revealer.set_child(cmd_bar)
+        self._cmd_revealer.set_child(capture_panel)
 
         # ── Filter bar ──────────────────────────────────────────────────────
         self._search_entry = Gtk.SearchEntry()
@@ -288,7 +288,7 @@ class LogViewerView(Gtk.Box):
         self._cmd_toggle_btn = Gtk.ToggleButton()
         self._cmd_toggle_btn.set_icon_name("pan-down-symbolic")
         self._cmd_toggle_btn.add_css_class("flat")
-        self._cmd_toggle_btn.set_tooltip_text("Show/hide command")
+        self._cmd_toggle_btn.set_tooltip_text("Show/hide capture source")
         self._cmd_toggle_btn.set_active(False)
         self._cmd_toggle_btn.connect("toggled", self._on_cmd_toggle)
 
@@ -623,6 +623,201 @@ class LogViewerView(Gtk.Box):
         label.set_label(item.body)
         self._apply_cell_tint(box, item.bucket)
 
+    # ── Capture panel (source) ─────────────────────────────────────────────
+
+    def _build_capture_panel(self) -> Gtk.Widget:
+        """Structured controls for the capture layer (what to pull from the
+        journal). Generates a journalctl command consumed by the reader; a
+        hidden "Advanced" raw override is kept as an escape hatch for power
+        users without exposing journalctl to everyone."""
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        panel.add_css_class("log-cmdbar")
+
+        # Row 1 — journal scope + boot
+        row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row1.append(Gtk.Label(label="Scope:"))
+        self._scope_dd = Gtk.DropDown.new_from_strings(["User", "System", "Both"])
+        self._scope_dd.set_tooltip_text(
+            "Which journal to read (--user / --system / both)"
+        )
+        self._scope_dd.connect("notify::selected", self._on_scope_changed)
+        row1.append(self._scope_dd)
+
+        self._boot_check = Gtk.CheckButton(label="This boot only")
+        self._boot_check.set_tooltip_text("Limit to the current boot (-b)")
+        self._boot_check.connect("toggled", self._on_boot_toggled)
+        row1.append(self._boot_check)
+        panel.append(row1)
+
+        # Row 2 — source preset + custom value
+        row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row2.append(Gtk.Label(label="Logs from:"))
+        self._source_dd = Gtk.DropDown.new_from_strings(
+            ["GNOME Shell", "Everything", "Custom unit…", "Custom identifier…"]
+        )
+        self._source_dd.set_tooltip_text(
+            "GNOME Shell captures all extension logs — extensions run inside "
+            "the gnome-shell process"
+        )
+        self._source_dd.connect("notify::selected", self._on_source_changed)
+        row2.append(self._source_dd)
+
+        self._source_value_entry = Gtk.Entry()
+        self._source_value_entry.set_hexpand(True)
+        self._source_value_entry.set_placeholder_text("e.g. gnome-shell.service")
+        self._source_value_entry.connect("changed", self._on_source_value_changed)
+        row2.append(self._source_value_entry)
+        panel.append(row2)
+
+        # Row 3 — Advanced: priority + raw override
+        adv = Gtk.Expander(label="Advanced")
+        adv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        adv_box.set_margin_top(8)
+
+        prio_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        prio_row.append(Gtk.Label(label="Min priority:"))
+        self._prio_dd = Gtk.DropDown.new_from_strings(
+            ["All", "Error", "Warning", "Info"]
+        )
+        self._prio_dd.set_tooltip_text(
+            "Drop lower-severity entries at the source (-p). Leave at All and "
+            "use the severity dots to filter live."
+        )
+        self._prio_dd.connect("notify::selected", self._on_priority_changed)
+        prio_row.append(self._prio_dd)
+        adv_box.append(prio_row)
+
+        raw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._raw_switch = Gtk.Switch()
+        self._raw_switch.set_valign(Gtk.Align.CENTER)
+        self._raw_switch.connect("notify::active", self._on_raw_switch_toggled)
+        raw_row.append(self._raw_switch)
+        raw_row.append(Gtk.Label(label="Use custom journalctl command"))
+        adv_box.append(raw_row)
+
+        self._raw_entry = Gtk.Entry()
+        self._raw_entry.set_hexpand(True)
+        self._raw_entry.set_placeholder_text("journalctl …")
+        self._raw_entry.set_tooltip_text(
+            "Supported flags: --user/--system, -t/--identifier, -u/--unit, "
+            "-b/--boot, -p/--priority. --follow/-o/-n are managed internally."
+        )
+        self._raw_entry.connect("changed", self._on_raw_entry_changed)
+        adv_box.append(self._raw_entry)
+
+        adv.set_child(adv_box)
+        panel.append(adv)
+
+        self._capture_panel = panel
+        self._sync_capture_controls_from_spec()
+        return panel
+
+    def _sync_capture_controls_from_spec(self) -> None:
+        """Push the current CaptureSpec into the widgets without firing handlers."""
+        self._block_capture_signals = True
+        spec = self._capture
+        self._scope_dd.set_selected(
+            _SCOPE_BY_INDEX.index(spec.scope) if spec.scope in _SCOPE_BY_INDEX else 0
+        )
+        self._boot_check.set_active(spec.this_boot)
+        self._source_dd.set_selected(
+            _SOURCE_BY_INDEX.index(spec.source) if spec.source in _SOURCE_BY_INDEX else 0
+        )
+        self._source_value_entry.set_text(spec.source_value)
+        try:
+            self._prio_dd.set_selected(_PRIORITY_BY_INDEX.index(spec.min_priority))
+        except ValueError:
+            self._prio_dd.set_selected(0)
+        self._raw_switch.set_active(spec.raw_override)
+        self._raw_entry.set_text(
+            spec.raw_text if spec.raw_override else build_journal_cmd(spec)
+        )
+        self._block_capture_signals = False
+        self._update_capture_sensitivity()
+
+    def _update_capture_sensitivity(self) -> None:
+        """Reflect raw-override and custom-source state in widget enablement."""
+        raw = self._capture.raw_override
+        for w in (self._scope_dd, self._boot_check, self._source_dd, self._prio_dd):
+            w.set_sensitive(not raw)
+        custom = self._capture.source in ("unit", "identifier")
+        self._source_value_entry.set_visible(custom)
+        self._source_value_entry.set_sensitive(not raw and custom)
+        self._raw_entry.set_sensitive(raw)
+
+    def _apply_capture_change(self) -> None:
+        """Recompute the effective command, refresh the preview, and persist."""
+        self._update_capture_sensitivity()
+        if not self._capture.raw_override:
+            # Keep the raw entry as a live preview of the generated command.
+            self._block_capture_signals = True
+            self._raw_entry.set_text(build_journal_cmd(self._capture))
+            self._block_capture_signals = False
+        self._persist_capture()
+
+    def _persist_capture(self) -> None:
+        settings = _load_settings()
+        settings[_CAPTURE_KEY] = asdict(self._capture)
+        settings.pop("journal_cmd", None)  # drop the obsolete free-text key
+        _save_settings(settings)
+
+    def _set_capture_panel_sensitive(self, enabled: bool) -> None:
+        self._capture_panel.set_sensitive(enabled)
+        if enabled:
+            self._update_capture_sensitivity()
+
+    # ── Capture panel handlers ─────────────────────────────────────────────
+
+    def _on_scope_changed(self, dd: Gtk.DropDown, _pspec: object) -> None:
+        if self._block_capture_signals:
+            return
+        self._capture.scope = _SCOPE_BY_INDEX[dd.get_selected()]
+        self._apply_capture_change()
+
+    def _on_boot_toggled(self, check: Gtk.CheckButton) -> None:
+        if self._block_capture_signals:
+            return
+        self._capture.this_boot = check.get_active()
+        self._apply_capture_change()
+
+    def _on_source_changed(self, dd: Gtk.DropDown, _pspec: object) -> None:
+        if self._block_capture_signals:
+            return
+        self._capture.source = _SOURCE_BY_INDEX[dd.get_selected()]
+        self._apply_capture_change()
+
+    def _on_source_value_changed(self, entry: Gtk.Entry) -> None:
+        if self._block_capture_signals:
+            return
+        self._capture.source_value = entry.get_text()
+        self._apply_capture_change()
+
+    def _on_priority_changed(self, dd: Gtk.DropDown, _pspec: object) -> None:
+        if self._block_capture_signals:
+            return
+        self._capture.min_priority = _PRIORITY_BY_INDEX[dd.get_selected()]
+        self._apply_capture_change()
+
+    def _on_raw_switch_toggled(self, sw: Gtk.Switch, _pspec: object) -> None:
+        if self._block_capture_signals:
+            return
+        active = sw.get_active()
+        if active and not self._capture.raw_text.strip():
+            # Seed the override with the command the structured controls produce.
+            self._capture.raw_text = build_journal_cmd(self._capture)
+            self._block_capture_signals = True
+            self._raw_entry.set_text(self._capture.raw_text)
+            self._block_capture_signals = False
+        self._capture.raw_override = active
+        self._apply_capture_change()
+
+    def _on_raw_entry_changed(self, entry: Gtk.Entry) -> None:
+        if self._block_capture_signals:
+            return
+        if self._capture.raw_override:
+            self._capture.raw_text = entry.get_text()
+            self._persist_capture()
+
     # ── Command bar handlers ───────────────────────────────────────────────
 
     def _set_start_stop_state(self, running: bool) -> None:
@@ -638,12 +833,12 @@ class LogViewerView(Gtk.Box):
             self._start_stop_btn.remove_css_class("suggested-action")
             self._start_stop_btn.add_css_class("destructive-action")
             self._start_stop_btn.set_tooltip_text("Stop reading the journal")
-            self._cmd_entry.set_sensitive(False)
+            self._set_capture_panel_sensitive(False)
         else:
             self._start_stop_btn.remove_css_class("destructive-action")
             self._start_stop_btn.add_css_class("suggested-action")
             self._start_stop_btn.set_tooltip_text("Start reading the journal")
-            self._cmd_entry.set_sensitive(True)
+            self._set_capture_panel_sensitive(True)
 
     def _set_state_pill(self, running: bool) -> None:
         for c in ("running", "stopped"):
@@ -655,16 +850,6 @@ class LogViewerView(Gtk.Box):
             self._state_pill.set_label("STOPPED")
             self._state_pill.add_css_class("stopped")
 
-    def _on_cmd_activate(self, _entry: Gtk.Entry) -> None:
-        if not self._is_running:
-            self._do_start()
-
-    def _on_cmd_changed(self, entry: Gtk.Entry) -> None:
-        self._journal_cmd = entry.get_text()
-        settings = _load_settings()
-        settings[_SETTINGS_KEY] = self._journal_cmd
-        _save_settings(settings)
-
     def _on_start_stop(self, _btn: Gtk.Button) -> None:
         if self._is_running:
             self._do_stop()
@@ -672,7 +857,7 @@ class LogViewerView(Gtk.Box):
             self._do_start()
 
     def _do_start(self) -> None:
-        extra = parse_extra_args(self._journal_cmd)
+        extra = parse_extra_args(build_journal_cmd(self._capture))
         self._reader.start(extra_args=extra)
         self._is_running = True
         self._set_start_stop_state(running=True)
