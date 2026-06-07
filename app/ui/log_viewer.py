@@ -670,15 +670,10 @@ class LogViewerView(Gtk.Box):
         self._source_value_entry.set_placeholder_text("e.g. gnome-shell.service")
         self._source_value_entry.connect("changed", self._on_source_value_changed)
         main.append(self._source_value_entry)
-        panel.append(main)
 
-        # Advanced — priority + raw override
-        adv = Gtk.Expander(label="Advanced")
-        adv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        adv_box.set_margin_top(8)
-
-        prio_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        prio_row.append(Gtk.Label(label="Min priority:"))
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        main.append(sep2)
+        main.append(Gtk.Label(label="Min priority:"))
         self._prio_dd = Gtk.DropDown.new_from_strings(
             ["All", "Error", "Warning", "Info"]
         )
@@ -687,8 +682,13 @@ class LogViewerView(Gtk.Box):
             "use the severity dots to filter live."
         )
         self._prio_dd.connect("notify::selected", self._on_priority_changed)
-        prio_row.append(self._prio_dd)
-        adv_box.append(prio_row)
+        main.append(self._prio_dd)
+        panel.append(main)
+
+        # Advanced — raw journalctl override (power-user escape hatch)
+        adv = Gtk.Expander(label="Advanced")
+        adv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        adv_box.set_margin_top(8)
 
         raw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._raw_switch = Gtk.Switch()
