@@ -1,4 +1,5 @@
 import logging
+import re
 import shlex
 import threading
 from dataclasses import dataclass, fields
@@ -70,6 +71,14 @@ def parse_extra_args(cmd_str: str) -> list[str]:
 # Legacy free-text default, kept only so pre-structured settings can be migrated.
 _LEGACY_DEFAULT_CMD = "journalctl --user -f"
 
+# The gnome-shell binary. Extensions run inside this process, so matching on the
+# executable (_EXE) captures every log it emits — core *and* extensions —
+# regardless of the per-call SYSLOG_IDENTIFIER (most extension logs carry none).
+_GNOME_SHELL_EXE = "/usr/bin/gnome-shell"
+
+# A journalctl positional field match, e.g. "_EXE=/usr/bin/gnome-shell".
+_FIELD_MATCH_RE = re.compile(r"^[A-Z_][A-Z0-9_]*=")
+
 
 @dataclass
 class CaptureSpec:
@@ -105,7 +114,7 @@ def build_journal_cmd(spec: CaptureSpec) -> str:
     if spec.this_boot:
         parts.append("-b")
     if spec.source == "gnome-shell":
-        parts += ["-t", "gnome-shell"]
+        parts.append(f"_EXE={_GNOME_SHELL_EXE}")
     elif spec.source == "unit" and spec.source_value.strip():
         parts += ["-u", spec.source_value.strip()]
     elif spec.source == "identifier" and spec.source_value.strip():
@@ -180,6 +189,10 @@ def _configure_reader(reader: Any, extra_args: list[str]) -> None:
                 reader.log_level(int(arg.split("=", 1)[1]))
             except (ValueError, AttributeError):
                 pass
+        elif not arg.startswith("-") and _FIELD_MATCH_RE.match(arg):
+            # journalctl positional field match, e.g. _EXE=/usr/bin/gnome-shell
+            key, value = arg.split("=", 1)
+            reader.add_match(**{key: value})
         i += 1
 
 
