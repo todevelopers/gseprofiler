@@ -67,14 +67,16 @@ def test_parse_extra_args_preserves_passthrough_flags():
 
 def test_build_journal_cmd_default_is_gnome_shell_capture():
     from app.core.journal_reader import CaptureSpec, build_journal_cmd
-    assert build_journal_cmd(CaptureSpec()) == "journalctl --user -b -t gnome-shell"
+    # Match the gnome-shell executable, not SYSLOG_IDENTIFIER: most extension
+    # logs carry no identifier, so -t gnome-shell would miss them.
+    assert build_journal_cmd(CaptureSpec()) == "journalctl --user -b _EXE=/usr/bin/gnome-shell"
 
 
 def test_build_journal_cmd_scope_variants():
     from app.core.journal_reader import CaptureSpec, build_journal_cmd
-    assert build_journal_cmd(CaptureSpec(scope="system")) == "journalctl --system -b -t gnome-shell"
+    assert build_journal_cmd(CaptureSpec(scope="system")) == "journalctl --system -b _EXE=/usr/bin/gnome-shell"
     # "both" omits scope flags (reader reads both journals by default)
-    assert build_journal_cmd(CaptureSpec(scope="both")) == "journalctl -b -t gnome-shell"
+    assert build_journal_cmd(CaptureSpec(scope="both")) == "journalctl -b _EXE=/usr/bin/gnome-shell"
 
 
 def test_build_journal_cmd_source_all_and_no_boot():
@@ -110,7 +112,7 @@ def test_build_journal_cmd_roundtrips_through_parse_extra_args():
     journalctl prefix)."""
     from app.core.journal_reader import CaptureSpec, build_journal_cmd, parse_extra_args
     cmd = build_journal_cmd(CaptureSpec())
-    assert parse_extra_args(cmd) == ["--user", "-b", "-t", "gnome-shell"]
+    assert parse_extra_args(cmd) == ["--user", "-b", "_EXE=/usr/bin/gnome-shell"]
 
 
 # ── capture_from_settings (migration, no systemd needed) ─────────────────────
@@ -314,6 +316,30 @@ def test_configure_reader_combined():
     assert ("SYSLOG_IDENTIFIER", "dbus") in r.matches
     assert ("_SYSTEMD_UNIT", "dbus.service") in r.matches
     assert r.log_level_set == 6
+
+
+def test_configure_reader_field_match_exe():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["-b", "_EXE=/usr/bin/gnome-shell"])
+    assert r.boot_filtered
+    assert ("_EXE", "/usr/bin/gnome-shell") in r.matches
+
+
+def test_configure_reader_field_match_arbitrary_field():
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["GLIB_DOMAIN=myext", "_PID=1234"])
+    assert ("GLIB_DOMAIN", "myext") in r.matches
+    assert ("_PID", "1234") in r.matches
+
+
+def test_configure_reader_ignores_lowercase_non_field_tokens():
+    """A bare lowercase token is not a journal field match and must be ignored."""
+    from app.core.journal_reader import _configure_reader
+    r = _MockReader()
+    _configure_reader(r, ["notafield=value"])
+    assert r.matches == []
 
 
 def test_configure_reader_ignores_user_system_flags():
