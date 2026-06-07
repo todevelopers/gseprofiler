@@ -1,6 +1,7 @@
 'use strict';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { bridgeLog, bridgeLogError } from './logger.js';
 
 const _MAX_CHILDREN = 50;
 const _MAX_STRING_LEN = 200;
@@ -20,20 +21,20 @@ export class Inspector {
     inspect(uuid, path = []) {
         const ext = Main.extensionManager.lookup(uuid);
         if (!ext?.stateObj) {
-            log(`[gse-profiler-bridge] inspector: no stateObj for ${uuid}`);
+            bridgeLog(`inspector: no stateObj for ${uuid}`);
             return { properties: [] };
         }
         try {
             let obj = ext.stateObj;
             for (const key of path) {
                 if (obj === null || obj === undefined || typeof obj !== 'object') {
-                    log(`[gse-profiler-bridge] inspector: path resolution failed at key "${key}"`);
+                    bridgeLog(`inspector: path resolution failed at key "${key}"`);
                     return { properties: [] };
                 }
                 obj = obj[key];
             }
             if (obj === null || obj === undefined || typeof obj !== 'object') {
-                log(`[gse-profiler-bridge] inspector: resolved path is not an object`);
+                bridgeLog(`inspector: resolved path is not an object`);
                 return { properties: [] };
             }
             // Arrays are serialized by index so the user sees elements, not prototype methods.
@@ -42,7 +43,7 @@ export class Inspector {
                 : _serializeObject(obj);
             return { properties };
         } catch (e) {
-            logError(e, '[gse-profiler-bridge] inspector.inspect');
+            bridgeLogError(e, 'inspector.inspect');
             return { properties: [] };
         }
     }

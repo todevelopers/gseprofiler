@@ -2,9 +2,10 @@
 
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { bridgeLog, bridgeLogError } from './logger.js';
 
 const DEBUG = false;
-function _dbg(...args) { if (DEBUG) { log(...args); } }
+function _dbg(...args) { if (DEBUG) { bridgeLog(args.join(' ')); } }
 
 // Base classes whose methods we never patch (framework internals).
 const _STOP_CLASSES = new Set(['Extension', 'Object']);
@@ -54,9 +55,9 @@ export class Profiler {
         }
 
         const ext = Main.extensionManager.lookup(uuid);
-        _dbg(`[gse-profiler-bridge] startProfiling: lookup=${!!ext} state=${ext?.state} stateObj=${!!ext?.stateObj}`);
+        _dbg(`startProfiling: lookup=${!!ext} state=${ext?.state} stateObj=${!!ext?.stateObj}`);
         if (!ext?.stateObj) {
-            log(`[gse-profiler-bridge] startProfiling: no stateObj for ${uuid}`);
+            bridgeLog(`startProfiling: no stateObj for ${uuid}`);
             return false;
         }
 
@@ -65,14 +66,14 @@ export class Profiler {
 
         const target = ext.stateObj;
         const ownKeys = Object.getOwnPropertyNames(target);
-        _dbg(`[gse-profiler-bridge] stateObj constructor=${target?.constructor?.name} ownKeys=[${ownKeys.join(',')}]`);
+        _dbg(`stateObj constructor=${target?.constructor?.name} ownKeys=[${ownKeys.join(',')}]`);
 
         try {
             // Walk the stateObj's prototype chain, stopping at framework base classes.
             let proto = target;
             while (proto) {
                 if (_isStopProto(proto)) { break; }
-                _dbg(`[gse-profiler-bridge] patching proto level: ${proto.constructor?.name} keys=[${Object.getOwnPropertyNames(proto).join(',')}]`);
+                _dbg(`patching proto level: ${proto.constructor?.name} keys=[${Object.getOwnPropertyNames(proto).join(',')}]`);
                 this.#patchObject(target, proto, '');
                 proto = Object.getPrototypeOf(proto);
             }
@@ -91,7 +92,7 @@ export class Profiler {
                 let sub = val;
                 while (sub) {
                     if (_isStopProto(sub)) { break; }
-                    _dbg(`[gse-profiler-bridge] patching sub ${propKey} level: ${sub.constructor?.name} keys=[${Object.getOwnPropertyNames(sub).join(',')}]`);
+                    _dbg(`patching sub ${propKey} level: ${sub.constructor?.name} keys=[${Object.getOwnPropertyNames(sub).join(',')}]`);
                     this.#patchObject(val, sub, propKey);
                     sub = Object.getPrototypeOf(sub);
                 }
@@ -99,15 +100,15 @@ export class Profiler {
 
             this.#running = true;
         } catch (e) {
-            logError(e, '[gse-profiler-bridge] startProfiling failed mid-patch, rolling back');
+            bridgeLogError(e, 'startProfiling failed mid-patch, rolling back');
             this.stopProfiling();
             return false;
         }
 
         if (this.#patches.size === 0) {
-            log(`[gse-profiler-bridge] WARNING: 0 functions patched for ${uuid} — extension may use closures or GObject vfuncs`);
+            bridgeLog(`WARNING: 0 functions patched for ${uuid} — extension may use closures or GObject vfuncs`);
         } else {
-            log(`[gse-profiler-bridge] profiling started: ${uuid} (${this.#patches.size} patched)`);
+            bridgeLog(`profiling started: ${uuid} (${this.#patches.size} patched)`);
         }
         return true;
     }
@@ -128,7 +129,7 @@ export class Profiler {
         this.#running = false;
         this.#targetUuid = null;
         this.#callDepth = 0;
-        log('[gse-profiler-bridge] profiling stopped');
+        bridgeLog('profiling stopped');
     }
 
     // ── Private ───────────────────────────────────────────────────────────
