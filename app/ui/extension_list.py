@@ -17,7 +17,7 @@ from app.core.github_installer import EXTENSIONS_ROOT, GitHubInstaller, GitHubSo
 
 _log = logging.getLogger(__name__)
 
-_ALL_DOT_CSS = ("success", "error", "dim-label", "warning")
+_ALL_DOT_CSS = ("success", "error", "dim-label", "warning", "accent")
 
 _FAVORITES_PATH = Path(GLib.get_user_config_dir()) / "gse-profiler" / "favorites.json"
 
@@ -56,6 +56,11 @@ class _ExtRow(Gtk.ListBoxRow):
         self._dot.set_valign(Gtk.Align.CENTER)
         box.append(self._dot)
 
+        # Current extension state and whether an upstream update is pending —
+        # both feed the single status dot (update takes visual precedence).
+        self._state: ExtensionState = ExtensionState.DISABLED
+        self._has_update: bool = False
+
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         text_box.set_hexpand(True)
 
@@ -85,14 +90,6 @@ class _ExtRow(Gtk.ListBoxRow):
         self._github_icon.set_visible(False)
         box.append(self._github_icon)
 
-        # Update-available dot — only when github_installer found a newer SHA.
-        self._update_dot = Gtk.Label(label="●")
-        self._update_dot.set_valign(Gtk.Align.CENTER)
-        self._update_dot.add_css_class("accent")
-        self._update_dot.set_tooltip_text("Update available")
-        self._update_dot.set_visible(False)
-        box.append(self._update_dot)
-
         self.set_child(box)
         self.update(info)
 
@@ -108,21 +105,12 @@ class _ExtRow(Gtk.ListBoxRow):
         has_update: bool = False,
     ) -> None:
         name = info.get("name") or self.uuid
-        state = info.get("state", ExtensionState.DISABLED)
+        self._state = info.get("state", ExtensionState.DISABLED)
+        self._has_update = has_update
         self._name_label.set_label(name)
         self._uuid_label.set_label(self.uuid)
-        for css in _ALL_DOT_CSS:
-            self._dot.remove_css_class(css)
-        if state == ExtensionState.ENABLED:
-            self._dot.add_css_class("success")
-        elif state == ExtensionState.ERROR:
-            self._dot.add_css_class("error")
-        elif state in (ExtensionState.OUT_OF_DATE,):
-            self._dot.add_css_class("warning")
-        else:
-            self._dot.add_css_class("dim-label")
+        self._refresh_dot()
         self.set_github_source(github_source)
-        self.set_update_available(has_update)
 
     def set_github_source(self, source: GitHubSource | None) -> None:
         if source is None:
@@ -135,7 +123,35 @@ class _ExtRow(Gtk.ListBoxRow):
         )
 
     def set_update_available(self, has_update: bool) -> None:
-        self._update_dot.set_visible(has_update)
+        self._has_update = has_update
+        self._refresh_dot()
+
+    def _refresh_dot(self) -> None:
+        """Colour the single status dot from the current state + update flag.
+
+        A pending upstream update takes visual precedence and turns the dot
+        blue (accent); otherwise it reflects the enable/error/out-of-date
+        state.  The tooltip always spells out the meaning since the colour
+        alone is now overloaded.
+        """
+        for css in _ALL_DOT_CSS:
+            self._dot.remove_css_class(css)
+        if self._has_update:
+            self._dot.add_css_class("accent")
+            self._dot.set_tooltip_text("Update available")
+            return
+        if self._state == ExtensionState.ENABLED:
+            self._dot.add_css_class("success")
+            self._dot.set_tooltip_text("Enabled")
+        elif self._state == ExtensionState.ERROR:
+            self._dot.add_css_class("error")
+            self._dot.set_tooltip_text("Error")
+        elif self._state == ExtensionState.OUT_OF_DATE:
+            self._dot.add_css_class("warning")
+            self._dot.set_tooltip_text("Out of date")
+        else:
+            self._dot.add_css_class("dim-label")
+            self._dot.set_tooltip_text("Disabled")
 
 
 class ExtensionListView(Gtk.Box):
