@@ -66,6 +66,50 @@ _TAG_BAR_SPACING = 4
 
 _MSG_TAG_RE = re.compile(r'^(?:JS LOG:\s*)?\[([^\]]+)\]\s*(.*)', re.DOTALL)
 
+# Hover-tooltip help texts (info icons, matching the Profiler view's pattern).
+_SEARCH_HELP = (
+    "The Logs tab tails the system journal live and groups each line under a "
+    "tag, so you can filter by where it came from. Search narrows the visible "
+    "lines by text, the severity dots filter by level (ERROR / WARN / INFO / "
+    "DEBUG), and the tag chips filter by tag — usually an extension, but with a "
+    "broader capture source it can be any log producer (a systemd unit, the "
+    "kernel, etc.). All three filters stack.\n\n"
+    "A line's tag is resolved most-specific first: an explicit [tag] prefix on "
+    "the message, then its GLIB_DOMAIN, then the syslog identifier. The simplest "
+    "way to make your extension filterable is to prefix log messages with a "
+    "bracketed tag, e.g. console.log('[my-ext] ready') — every such line then "
+    "collapses under a single \"my-ext\" chip. Logging through console.* sets "
+    "GLIB_DOMAIN automatically, and GLib.log_structured() lets you set that "
+    "domain explicitly, so those lines stay grouped under it even without a "
+    "prefix."
+)
+_CAPTURE_HELP = (
+    "Source is the capture layer — it defines what journalctl pulls from the "
+    "journal before reading starts, like a capture filter. It is separate from "
+    "the live Search / severity / tag filters, which only narrow what has "
+    "already been captured. Configure it while stopped; it is locked while "
+    "reading.\n\n"
+    "• Scope — which journal to read: User (--user), System (--system), or "
+    "Both.\n"
+    "• This boot only — limit to the current boot (-b).\n"
+    "• Logs from — the source: GNOME Shell matches the gnome-shell binary and "
+    "so captures every extension (they all run inside that one process); "
+    "Everything reads the whole journal; or target a custom unit (-u) or "
+    "identifier (-t).\n"
+    "• Min priority — drop lower-severity entries at the source (-p). Leave it "
+    "at All and use the severity dots to filter live instead.\n"
+    "• Advanced — type a raw journalctl command for full control."
+)
+
+
+def _make_info_icon(tooltip: str) -> Gtk.Image:
+    """Dimmed info icon with a hover tooltip, matching the Profiler view."""
+    icon = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
+    icon.add_css_class("prof-info-btn")
+    icon.set_valign(Gtk.Align.CENTER)
+    icon.set_tooltip_text(tooltip)
+    return icon
+
 
 def _priority_bucket(priority: int) -> str:
     if priority <= 3:
@@ -319,6 +363,7 @@ class LogViewerView(Gtk.Box):
 
         filter_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         filter_bar.add_css_class("log-filterbar")
+        filter_bar.append(_make_info_icon(_SEARCH_HELP))
         filter_bar.append(self._search_entry)
         filter_bar.append(self._auto_scroll_btn)
 
@@ -666,6 +711,7 @@ class LogViewerView(Gtk.Box):
 
         # Main row — scope, boot, source preset and custom value on one line.
         main = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        main.append(_make_info_icon(_CAPTURE_HELP))
         main.append(Gtk.Label(label="Scope:"))
         self._scope_dd = Gtk.DropDown.new_from_strings(["User", "System", "Both"])
         self._scope_dd.set_tooltip_text(
