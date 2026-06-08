@@ -366,15 +366,13 @@ class LogViewerView(Gtk.Box):
         filter_bar.append(self._search_entry)
         filter_bar.append(self._auto_scroll_btn)
 
-        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        filter_bar.append(sep)
+        filter_bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         filter_bar.append(_make_info_icon(_SEARCH_HELP))
         filter_bar.append(self._copy_btn)
         filter_bar.append(export_btn)
         filter_bar.append(clear_btn)
 
-        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        filter_bar.append(sep2)
+        filter_bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         filter_bar.append(self._cmd_toggle_btn)
         filter_bar.append(self._start_stop_btn)
 
@@ -712,6 +710,7 @@ class LogViewerView(Gtk.Box):
         # Main row — scope, boot, source preset and custom value on one line.
         main = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         main.append(_make_info_icon(_CAPTURE_HELP))
+        main.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         main.append(Gtk.Label(label="Scope:"))
         self._scope_dd = Gtk.DropDown.new_from_strings(["User", "System", "Both"])
         self._scope_dd.set_tooltip_text(
@@ -725,8 +724,7 @@ class LogViewerView(Gtk.Box):
         self._boot_check.connect("toggled", self._on_boot_toggled)
         main.append(self._boot_check)
 
-        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        main.append(sep)
+        main.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
         from_lbl = Gtk.Label(label="Logs from:")
         main.append(from_lbl)
@@ -746,8 +744,7 @@ class LogViewerView(Gtk.Box):
         self._source_value_entry.connect("changed", self._on_source_value_changed)
         main.append(self._source_value_entry)
 
-        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        main.append(sep2)
+        main.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         main.append(Gtk.Label(label="Min priority:"))
         self._prio_dd = Gtk.DropDown.new_from_strings(
             ["All", "Error", "Warning", "Info"]
