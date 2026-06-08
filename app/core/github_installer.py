@@ -25,7 +25,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import gi
 
@@ -76,13 +76,34 @@ _ALWAYS_STRIP_NAMES = frozenset({
 _ALWAYS_STRIP_DIRS = frozenset({".git", ".github", ".gitlab"})
 
 # Accepts:  owner/repo, https://github.com/owner/repo, .../owner/repo.git,
-# .../owner/repo/.  Owner: ASCII alnum + hyphen.  Repo: alnum + . _ -.
+# .../owner/repo/, and subdirectory URLs .../owner/repo/tree/<ref>/<subpath>.
+# Owner: ASCII alnum + hyphen.  Repo: alnum + . _ - (neither may contain '/',
+# which keeps the optional /tree/... suffix unambiguous).
+#
+# Limitation: a branch name containing slashes (e.g. ``feature/x``) cannot be
+# distinguished from the subpath in a ``/tree/`` URL without querying GitHub,
+# so the first segment after ``/tree/`` is always taken as the ref and the
+# rest as the subpath.  Single-segment branches (main, master, …) — the common
+# case — are unaffected.
 _REPO_URL_RE = re.compile(
     r"^(?:https?://github\.com/)?"
     r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)/"
-    r"(?P<repo>[A-Za-z0-9._-]+?)"
-    r"(?:\.git)?$"
+    r"(?P<repo>[A-Za-z0-9._-]+?)(?:\.git)?"
+    r"(?:/tree/(?P<ref>[^/]+)(?:/(?P<subpath>.+))?)?$"
 )
+
+
+class ParsedRepo(NamedTuple):
+    """A parsed GitHub install target.
+
+    ``ref`` and ``subpath`` are set only for ``/tree/<ref>/<subpath>`` URLs;
+    otherwise they are ``None`` (default branch, repo root).
+    """
+
+    owner: str
+    repo: str
+    ref: str | None
+    subpath: str | None
 
 
 class InstallError(Exception):
@@ -92,15 +113,30 @@ class InstallError(Exception):
 # ─── Public helpers ────────────────────────────────────────────────────────
 
 
-def parse_repo_url(url: str) -> tuple[str, str] | None:
-    """Parse a GitHub repo identifier into ``(owner, repo)``, or ``None``."""
-    url = (url or "").strip().rstrip("/\\")
+def parse_repo_url(url: str) -> ParsedRepo | None:
+    """Parse a GitHub repo identifier into a :class:`ParsedRepo`, or ``None``.
+
+    Plain ``owner/repo`` and ``https://github.com/owner/repo`` forms yield
+    ``ref=None, subpath=None``.  A subdirectory URL such as
+    ``https://github.com/owner/repo/tree/main/src`` yields ``ref="main",
+    subpath="src"``.
+    """
+    url = (url or "").strip()
+    # Drop any query string / fragment (e.g. ``?tab=readme``, ``#L10``).
+    url = url.split("#", 1)[0].split("?", 1)[0].rstrip("/\\")
     if not url:
         return None
     m = _REPO_URL_RE.match(url)
     if not m:
         return None
-    return m.group("owner"), m.group("repo")
+    subpath = m.group("subpath")
+    if subpath is not None:
+        # Normalise: collapse separators, strip leading/trailing slashes.
+        subpath = subpath.strip("/").strip()
+        # Reject path traversal — the subpath indexes into the extracted tree.
+        if not subpath or ".." in Path(subpath).parts:
+            return None
+    return ParsedRepo(m.group("owner"), m.group("repo"), m.group("ref"), subpath)
 
 
 # ─── Tarball extraction + filtering (runs on a worker thread) ─────────────
@@ -160,15 +196,25 @@ def _read_gitignore_patterns(gitignore: Path) -> list[str]:
     return patterns
 
 
-def _filter_tree(root: Path) -> None:
+def _filter_tree(root: Path, repo_root: Path | None = None) -> None:
     """Remove files unrelated to the extension from ``root`` in-place.
 
     Order matters: pattern files (``.gitattributes`` / ``.gitignore``) are
-    read **before** they are deleted by the always-strip pass.
+    read **before** they are deleted by the always-strip pass.  When ``root``
+    is a subdirectory install, ``repo_root`` supplies the repository-level
+    pattern files that also govern it.
     """
-    # 1. Collect patterns while pattern files still exist.
-    export_ignore = _read_export_ignore_patterns(root / ".gitattributes")
-    gitignored = _read_gitignore_patterns(root / ".gitignore")
+    # 1. Collect patterns while pattern files still exist.  Read the
+    #    repo-root files first (when installing a subdirectory) so their
+    #    patterns apply too, then the extension dir's own.
+    pattern_roots = [root]
+    if repo_root is not None and repo_root.resolve() != root.resolve():
+        pattern_roots.insert(0, repo_root)
+    export_ignore: list[str] = []
+    gitignored: list[str] = []
+    for base in pattern_roots:
+        export_ignore += _read_export_ignore_patterns(base / ".gitattributes")
+        gitignored += _read_gitignore_patterns(base / ".gitignore")
     all_patterns = export_ignore + gitignored
 
     # 2. Apply patterns via pathspec (git-wildmatch).
@@ -285,10 +331,21 @@ class GitHubInstaller(GObject.Object):
         if parsed is None:
             self._fail(on_done, "Not a valid GitHub repository (use owner/repo or URL).")
             return
-        owner, repo = parsed
-        _log.info("Installing from github.com/%s/%s", owner, repo)
+        owner, repo, ref, subpath = parsed
+        _log.info(
+            "Installing from github.com/%s/%s%s%s",
+            owner,
+            repo,
+            f" (ref {ref})" if ref else "",
+            f" subpath {subpath}" if subpath else "",
+        )
         _emit_progress(on_progress, "Checking repository…")
-        self._resolve_default_branch(owner, repo, on_done, on_progress)
+        if ref is not None:
+            # The URL pinned a branch — skip the default-branch lookup.
+            _emit_progress(on_progress, "Fetching latest commit…")
+            self._resolve_commit(owner, repo, ref, subpath, on_done, on_progress)
+        else:
+            self._resolve_default_branch(owner, repo, subpath, on_done, on_progress)
 
     def update(
         self,
@@ -298,8 +355,16 @@ class GitHubInstaller(GObject.Object):
     ) -> None:
         """Re-install from upstream HEAD.  ``installed_at`` is preserved."""
         _log.info("Updating from github.com/%s/%s", source.owner, source.repo)
-        _emit_progress(on_progress, "Checking repository…")
-        self._resolve_default_branch(source.owner, source.repo, on_done, on_progress)
+        _emit_progress(on_progress, "Fetching latest commit…")
+        # Re-resolve the tracked ref directly so the recorded subpath is honoured.
+        self._resolve_commit(
+            source.owner,
+            source.repo,
+            source.ref,
+            source.subpath or None,
+            on_done,
+            on_progress,
+        )
 
     def has_update(self, uuid: str) -> str | None:
         """Return the cached new SHA if an update is known to be available."""
@@ -331,6 +396,7 @@ class GitHubInstaller(GObject.Object):
         self,
         owner: str,
         repo: str,
+        subpath: str | None,
         on_done: _InstallCallback | None,
         on_progress: _ProgressCallback | None = None,
     ) -> None:
@@ -342,7 +408,7 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_repo_info,
-            (owner, repo, msg, on_done, on_progress),
+            (owner, repo, subpath, msg, on_done, on_progress),
         )
 
     def _on_repo_info(
@@ -351,7 +417,7 @@ class GitHubInstaller(GObject.Object):
         result: Gio.AsyncResult,
         user_data: tuple,
     ) -> None:
-        owner, repo, msg, on_done, on_progress = user_data
+        owner, repo, subpath, msg, on_done, on_progress = user_data
         try:
             body = bytes(session.send_and_read_finish(result).get_data() or b"")
         except GLib.Error as exc:
@@ -371,13 +437,14 @@ class GitHubInstaller(GObject.Object):
             self._fail(on_done, "GitHub did not return a default branch.")
             return
         _emit_progress(on_progress, "Fetching latest commit…")
-        self._resolve_commit(owner, repo, branch, on_done, on_progress)
+        self._resolve_commit(owner, repo, branch, subpath, on_done, on_progress)
 
     def _resolve_commit(
         self,
         owner: str,
         repo: str,
         ref: str,
+        subpath: str | None,
         on_done: _InstallCallback | None,
         on_progress: _ProgressCallback | None = None,
     ) -> None:
@@ -389,7 +456,7 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_commit_info,
-            (owner, repo, ref, msg, on_done, on_progress),
+            (owner, repo, ref, subpath, msg, on_done, on_progress),
         )
 
     def _on_commit_info(
@@ -398,7 +465,7 @@ class GitHubInstaller(GObject.Object):
         result: Gio.AsyncResult,
         user_data: tuple,
     ) -> None:
-        owner, repo, ref, msg, on_done, on_progress = user_data
+        owner, repo, ref, subpath, msg, on_done, on_progress = user_data
         try:
             body = bytes(session.send_and_read_finish(result).get_data() or b"")
         except GLib.Error as exc:
@@ -418,7 +485,7 @@ class GitHubInstaller(GObject.Object):
             self._fail(on_done, "GitHub did not return a commit SHA.")
             return
         _emit_progress(on_progress, "Downloading archive…")
-        self._download_tarball(owner, repo, ref, sha, on_done, on_progress)
+        self._download_tarball(owner, repo, ref, sha, subpath, on_done, on_progress)
 
     def _download_tarball(
         self,
@@ -426,6 +493,7 @@ class GitHubInstaller(GObject.Object):
         repo: str,
         ref: str,
         sha: str,
+        subpath: str | None,
         on_done: _InstallCallback | None,
         on_progress: _ProgressCallback | None = None,
     ) -> None:
@@ -437,7 +505,7 @@ class GitHubInstaller(GObject.Object):
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_tarball,
-            (owner, repo, ref, sha, msg, on_done, on_progress),
+            (owner, repo, ref, sha, subpath, msg, on_done, on_progress),
         )
 
     def _on_tarball(
@@ -446,7 +514,7 @@ class GitHubInstaller(GObject.Object):
         result: Gio.AsyncResult,
         user_data: tuple,
     ) -> None:
-        owner, repo, ref, sha, msg, on_done, on_progress = user_data
+        owner, repo, ref, sha, subpath, msg, on_done, on_progress = user_data
         try:
             bytes_ = session.send_and_read_finish(result)
         except GLib.Error as exc:
@@ -464,7 +532,7 @@ class GitHubInstaller(GObject.Object):
         # Hand off to a worker thread; results return via GLib.idle_add.
         threading.Thread(
             target=self._extract_install_blocking,
-            args=(owner, repo, ref, sha, data, on_done, on_progress),
+            args=(owner, repo, ref, sha, subpath, data, on_done, on_progress),
             daemon=True,
         ).start()
 
@@ -476,12 +544,15 @@ class GitHubInstaller(GObject.Object):
         repo: str,
         ref: str,
         sha: str,
+        subpath: str | None,
         tarball: bytes,
         on_done: _InstallCallback | None,
         on_progress: _ProgressCallback | None = None,
     ) -> None:
         try:
-            uuid = _do_extract_install(tarball, on_progress=on_progress)
+            uuid, resolved_subpath = _do_extract_install(
+                tarball, subpath=subpath, on_progress=on_progress
+            )
         except InstallError as exc:
             GLib.idle_add(self._fail, on_done, str(exc))
             return
@@ -489,7 +560,16 @@ class GitHubInstaller(GObject.Object):
             _log.exception("Unexpected install error")
             GLib.idle_add(self._fail, on_done, f"Install failed: {exc}")
             return
-        GLib.idle_add(self._finish_install, uuid, owner, repo, ref, sha, on_done)
+        GLib.idle_add(
+            self._finish_install,
+            uuid,
+            owner,
+            repo,
+            ref,
+            sha,
+            resolved_subpath,
+            on_done,
+        )
 
     # ── Main-loop callbacks for worker results ───────────────────────────
 
@@ -500,6 +580,7 @@ class GitHubInstaller(GObject.Object):
         repo: str,
         ref: str,
         sha: str,
+        subpath: str,
         on_done: _InstallCallback | None,
     ) -> bool:
         # Preserve the original install timestamp when re-installing (update).
@@ -517,6 +598,7 @@ class GitHubInstaller(GObject.Object):
                 ref=ref,
                 commit_sha=sha,
                 installed_at=installed_at,
+                subpath=subpath,
             ),
         )
         self._known_updates.pop(uuid, None)
@@ -598,11 +680,18 @@ class GitHubInstaller(GObject.Object):
 def _do_extract_install(
     tarball: bytes,
     extensions_root: Path | None = None,
+    subpath: str | None = None,
     on_progress: _ProgressCallback | None = None,
-) -> str:
+) -> tuple[str, str]:
     """Extract, validate, filter, and move into the extensions directory.
 
-    Returns the extension UUID on success.  Raises :class:`InstallError`.
+    ``subpath`` pins the subdirectory (relative to the repo root) that holds
+    the extension.  When ``None``, ``metadata.json`` is looked up at the repo
+    root and, failing that, auto-detected anywhere in the tree.
+
+    Returns ``(uuid, resolved_subpath)`` on success — ``resolved_subpath`` is
+    ``""`` for a root install and is recorded in the source registry so
+    updates re-resolve the same directory.  Raises :class:`InstallError`.
     The upstream tree is installed verbatim — provenance is recorded
     separately in the source registry, never written into ``metadata.json``.
     """
@@ -625,13 +714,12 @@ def _do_extract_install(
         top_dirs = [p for p in extract_dir.iterdir() if p.is_dir()]
         if len(top_dirs) != 1:
             raise InstallError("Unexpected tarball layout (no single top-level dir).")
-        src_root = top_dirs[0]
+        repo_root = top_dirs[0]
+
+        # Locate the extension directory within the extracted repo.
+        src_root, resolved_subpath = _locate_extension(repo_root, subpath)
 
         meta_path = src_root / "metadata.json"
-        if not meta_path.is_file():
-            raise InstallError(
-                "Not a GNOME Shell extension (no metadata.json at repo root)."
-            )
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -641,7 +729,9 @@ def _do_extract_install(
             raise InstallError("metadata.json has no valid 'uuid' field.")
 
         # Filter out unrelated files (git meta + export-ignore + .gitignore).
-        _filter_tree(src_root)
+        # When installing a subdirectory, the repo-root .gitignore /
+        # .gitattributes still govern it, so feed both pattern roots.
+        _filter_tree(src_root, repo_root=repo_root)
 
         if not meta_path.is_file():
             raise InstallError("Filter removed required file: metadata.json")
@@ -663,7 +753,65 @@ def _do_extract_install(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_root), str(target))
         _log.info("Installed %s to %s", uuid, target)
-        return uuid
+        return uuid, resolved_subpath
+
+
+def _locate_extension(
+    repo_root: Path, subpath: str | None
+) -> tuple[Path, str]:
+    """Resolve the directory holding ``metadata.json`` inside ``repo_root``.
+
+    With an explicit ``subpath`` it must contain ``metadata.json``.  Without
+    one, the repo root is preferred; failing that, the tree is searched and a
+    single match is accepted automatically (shallowest wins on ties — but an
+    ambiguous tie at the same depth is rejected).  Returns
+    ``(extension_dir, resolved_subpath)`` where ``resolved_subpath`` is POSIX
+    and ``""`` for a root install.
+    """
+    if subpath:
+        candidate = (repo_root / subpath).resolve()
+        # Guard against traversal escaping the extracted tree.
+        try:
+            candidate.relative_to(repo_root.resolve())
+        except ValueError as exc:
+            raise InstallError(f"Unsafe subdirectory path: {subpath}") from exc
+        if not candidate.is_dir():
+            raise InstallError(f"Subdirectory '{subpath}' not found in the repository.")
+        if not (candidate / "metadata.json").is_file():
+            raise InstallError(
+                f"No metadata.json in '{subpath}' — not a GNOME Shell extension."
+            )
+        return candidate, subpath
+
+    # No subpath: prefer the repo root.
+    if (repo_root / "metadata.json").is_file():
+        return repo_root, ""
+
+    # Auto-detect: search the tree for metadata.json files.
+    matches = sorted(
+        repo_root.rglob("metadata.json"),
+        key=lambda p: (len(p.relative_to(repo_root).parts), str(p)),
+    )
+    if not matches:
+        raise InstallError(
+            "Not a GNOME Shell extension (no metadata.json found in the repository)."
+        )
+    if len(matches) > 1:
+        # Accept a unique shallowest match; reject genuine ambiguity at the
+        # same depth so we never silently install the wrong subdirectory.
+        depths = [len(p.relative_to(repo_root).parts) for p in matches]
+        if depths[0] == depths[1]:
+            rels = ", ".join(
+                str(p.relative_to(repo_root).parent.as_posix()) or "."
+                for p in matches[:4]
+            )
+            raise InstallError(
+                "Multiple extensions found in this repository "
+                f"({rels}). Add the subdirectory to the URL, e.g. "
+                ".../tree/<branch>/<path>."
+            )
+    ext_dir = matches[0].parent
+    return ext_dir, ext_dir.relative_to(repo_root).as_posix()
 
 
 def _compile_schemas(extension_root: Path) -> None:

@@ -342,9 +342,10 @@ class DetailsView(Gtk.Stack):
             self._github_group.set_visible(False)
         else:
             self._github_group.set_visible(True)
-            self._github_repo_row.set_subtitle(
-                f"github.com/{source.owner}/{source.repo}"
-            )
+            repo_subtitle = f"github.com/{source.owner}/{source.repo}"
+            if source.subpath:
+                repo_subtitle += f"  ›  {source.subpath}"
+            self._github_repo_row.set_subtitle(repo_subtitle)
             commit_text = source.short_sha or source.commit_sha
             if source.ref:
                 commit_text = f"{commit_text}  ({source.ref})"
@@ -383,7 +384,7 @@ class DetailsView(Gtk.Stack):
         if self._active_source is None:
             return
         try:
-            Gio.AppInfo.launch_default_for_uri(self._active_source.html_url, None)
+            Gio.AppInfo.launch_default_for_uri(self._active_source.tree_url, None)
         except GLib.Error as exc:
             _log.warning("Failed to open GitHub URL: %s", exc)
 

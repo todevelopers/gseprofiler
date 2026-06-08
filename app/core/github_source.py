@@ -23,6 +23,7 @@ class GitHubSource:
     ref: str  # branch name we tracked (default branch in V1)
     commit_sha: str
     installed_at: str  # ISO-8601 UTC
+    subpath: str = ""  # subdirectory within the repo that holds the extension
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,6 +37,7 @@ class GitHubSource:
                 ref=str(d["ref"]),
                 commit_sha=str(d["commit_sha"]),
                 installed_at=str(d.get("installed_at", "")),
+                subpath=str(d.get("subpath", "")),
             )
         except (KeyError, TypeError):
             return None
@@ -43,6 +45,13 @@ class GitHubSource:
     @property
     def html_url(self) -> str:
         return f"https://github.com/{self.owner}/{self.repo}"
+
+    @property
+    def tree_url(self) -> str:
+        """Repo page, or the subdirectory's tree page when installed from one."""
+        if self.subpath:
+            return f"{self.html_url}/tree/{self.ref}/{self.subpath}"
+        return self.html_url
 
     @property
     def short_sha(self) -> str:

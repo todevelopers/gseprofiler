@@ -59,7 +59,9 @@ class GitHubInstallDialog(Adw.Dialog):
         intro = Gtk.Label(
             label=(
                 "Download and install a GNOME Shell extension from a GitHub "
-                "repository. The default branch's latest commit is used."
+                "repository. The default branch's latest commit is used. If "
+                "the extension lives in a subdirectory, paste its folder URL "
+                "and that folder is installed instead."
             ),
             wrap=True,
             xalign=0.0,
@@ -76,7 +78,11 @@ class GitHubInstallDialog(Adw.Dialog):
         body.append(group)
 
         hint = Gtk.Label(
-            label="Examples: owner/repo or https://github.com/owner/repo",
+            label=(
+                "Examples: owner/repo, https://github.com/owner/repo, "
+                "or https://github.com/owner/repo/tree/main/src"
+            ),
+            wrap=True,
             xalign=0.0,
         )
         hint.add_css_class("caption")

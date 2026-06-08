@@ -23,16 +23,29 @@ pytest.importorskip("gi", reason="PyGObject (gi) not available in this environme
 @pytest.mark.parametrize(
     "url,expected",
     [
-        ("owner/repo", ("owner", "repo")),
-        ("octo-org/my.ext-thing", ("octo-org", "my.ext-thing")),
-        ("https://github.com/owner/repo", ("owner", "repo")),
-        ("https://github.com/owner/repo.git", ("owner", "repo")),
-        ("https://github.com/owner/repo/", ("owner", "repo")),
-        ("http://github.com/owner/repo", ("owner", "repo")),
-        ("  owner/repo  ", ("owner", "repo")),
+        ("owner/repo", ("owner", "repo", None, None)),
+        ("octo-org/my.ext-thing", ("octo-org", "my.ext-thing", None, None)),
+        ("https://github.com/owner/repo", ("owner", "repo", None, None)),
+        ("https://github.com/owner/repo.git", ("owner", "repo", None, None)),
+        ("https://github.com/owner/repo/", ("owner", "repo", None, None)),
+        ("http://github.com/owner/repo", ("owner", "repo", None, None)),
+        ("  owner/repo  ", ("owner", "repo", None, None)),
+        ("https://github.com/owner/repo?tab=readme", ("owner", "repo", None, None)),
+        # Subdirectory (/tree/<ref>/<subpath>) URLs.
+        (
+            "https://github.com/sakithb/media-controls/tree/main/src",
+            ("sakithb", "media-controls", "main", "src"),
+        ),
+        (
+            "https://github.com/o/r/tree/master/a/b/c",
+            ("o", "r", "master", "a/b/c"),
+        ),
+        ("https://github.com/o/r/tree/main/src/", ("o", "r", "main", "src")),
+        # /tree/<ref> with no subpath → branch pinned, root extension.
+        ("https://github.com/o/r/tree/develop", ("o", "r", "develop", None)),
     ],
 )
-def test_parse_repo_url_valid(url: str, expected: tuple[str, str]) -> None:
+def test_parse_repo_url_valid(url: str, expected: tuple) -> None:
     from app.core.github_installer import parse_repo_url
 
     assert parse_repo_url(url) == expected
@@ -49,6 +62,7 @@ def test_parse_repo_url_valid(url: str, expected: tuple[str, str]) -> None:
         "owner/",
         "https://gitlab.com/owner/repo",
         "https://example.com/owner/repo",
+        "https://github.com/o/r/tree/main/../../etc",  # path traversal
     ],
 )
 def test_parse_repo_url_invalid(url: str) -> None:
@@ -95,8 +109,9 @@ def test_filter_strips_git_meta_and_export_ignore_and_gitignore(tmp_path: Path) 
         },
     )
 
-    uuid = _do_extract_install(tar, extensions_root=tmp_path)
+    uuid, subpath = _do_extract_install(tar, extensions_root=tmp_path)
     assert uuid == "test@ex"
+    assert subpath == ""
     target = tmp_path / "test@ex"
 
     # Kept
@@ -148,6 +163,100 @@ def test_install_rejects_metadata_without_uuid(tmp_path: Path) -> None:
 
     tar = _make_tarball("repo-x", {"metadata.json": json.dumps({"name": "no uuid"})})
     with pytest.raises(InstallError, match="uuid"):
+        _do_extract_install(tar, extensions_root=tmp_path)
+
+
+# ─── Subdirectory installs ────────────────────────────────────────────────
+
+
+def test_install_from_explicit_subpath(tmp_path: Path) -> None:
+    """metadata.json in a subdirectory installs when the subpath is given."""
+    from app.core.github_installer import _do_extract_install
+
+    tar = _make_tarball(
+        "repo-deadbeef",
+        {
+            "README.md": "# top level, no extension here",
+            "src/metadata.json": json.dumps({"uuid": "sub@ex"}),
+            "src/extension.js": "// hi",
+        },
+    )
+    uuid, subpath = _do_extract_install(tar, extensions_root=tmp_path, subpath="src")
+    assert uuid == "sub@ex"
+    assert subpath == "src"
+    # The extension dir contents land directly under <uuid>/, not under src/.
+    assert (tmp_path / "sub@ex" / "metadata.json").is_file()
+    assert (tmp_path / "sub@ex" / "extension.js").is_file()
+    assert not (tmp_path / "sub@ex" / "src").exists()
+
+
+def test_install_subpath_applies_repo_root_gitignore(tmp_path: Path) -> None:
+    """A repo-root .gitignore still filters files inside the subdirectory."""
+    pytest.importorskip("pathspec")
+    from app.core.github_installer import _do_extract_install
+
+    tar = _make_tarball(
+        "repo-x",
+        {
+            ".gitignore": "*.log\n",
+            "src/metadata.json": json.dumps({"uuid": "sub@ex"}),
+            "src/debug.log": "noise",
+        },
+    )
+    _do_extract_install(tar, extensions_root=tmp_path, subpath="src")
+    assert (tmp_path / "sub@ex" / "metadata.json").is_file()
+    assert not (tmp_path / "sub@ex" / "debug.log").exists()
+
+
+def test_install_rejects_subpath_without_metadata(tmp_path: Path) -> None:
+    from app.core.github_installer import InstallError, _do_extract_install
+
+    tar = _make_tarball(
+        "repo-x",
+        {"src/extension.js": "// no metadata here"},
+    )
+    with pytest.raises(InstallError, match="metadata.json"):
+        _do_extract_install(tar, extensions_root=tmp_path, subpath="src")
+
+
+def test_install_rejects_missing_subpath(tmp_path: Path) -> None:
+    from app.core.github_installer import InstallError, _do_extract_install
+
+    tar = _make_tarball("repo-x", {"metadata.json": json.dumps({"uuid": "x@x"})})
+    with pytest.raises(InstallError, match="not found"):
+        _do_extract_install(tar, extensions_root=tmp_path, subpath="nope")
+
+
+def test_install_autodetects_single_nested_metadata(tmp_path: Path) -> None:
+    """With no subpath and none at root, a unique nested metadata is found."""
+    from app.core.github_installer import _do_extract_install
+
+    tar = _make_tarball(
+        "repo-x",
+        {
+            "README.md": "# monorepo",
+            "extension/metadata.json": json.dumps({"uuid": "auto@ex"}),
+            "extension/extension.js": "// hi",
+        },
+    )
+    uuid, subpath = _do_extract_install(tar, extensions_root=tmp_path)
+    assert uuid == "auto@ex"
+    assert subpath == "extension"
+    assert (tmp_path / "auto@ex" / "metadata.json").is_file()
+
+
+def test_install_rejects_ambiguous_metadata_at_same_depth(tmp_path: Path) -> None:
+    """Two extensions at the same depth must be rejected, not guessed."""
+    from app.core.github_installer import InstallError, _do_extract_install
+
+    tar = _make_tarball(
+        "repo-x",
+        {
+            "one/metadata.json": json.dumps({"uuid": "one@ex"}),
+            "two/metadata.json": json.dumps({"uuid": "two@ex"}),
+        },
+    )
+    with pytest.raises(InstallError, match="Multiple extensions"):
         _do_extract_install(tar, extensions_root=tmp_path)
 
 
@@ -230,7 +339,7 @@ def test_finish_install_records_source_in_registry(tmp_path: Path) -> None:
     reg = SourceRegistry(tmp_path / "sources.json")
     inst = GitHubInstaller(reg)
 
-    inst._finish_install("ext@x", "owner", "repo", "main", "cafef00d", None)
+    inst._finish_install("ext@x", "owner", "repo", "main", "cafef00d", "src", None)
 
     src = reg.get("ext@x")
     assert src is not None
@@ -238,6 +347,7 @@ def test_finish_install_records_source_in_registry(tmp_path: Path) -> None:
     assert src.repo == "repo"
     assert src.ref == "main"
     assert src.commit_sha == "cafef00d"
+    assert src.subpath == "src"
     assert src.installed_at  # non-empty ISO timestamp
 
 
@@ -249,12 +359,12 @@ def test_finish_install_preserves_installed_at_on_update(tmp_path: Path) -> None
     reg = SourceRegistry(tmp_path / "sources.json")
     inst = GitHubInstaller(reg)
 
-    inst._finish_install("ext@x", "o", "r", "main", "aaaaaaa", None)
+    inst._finish_install("ext@x", "o", "r", "main", "aaaaaaa", "", None)
     first = reg.get("ext@x")
     assert first is not None
     first_installed_at = first.installed_at
 
-    inst._finish_install("ext@x", "o", "r", "main", "bbbbbbb", None)
+    inst._finish_install("ext@x", "o", "r", "main", "bbbbbbb", "", None)
     second = reg.get("ext@x")
     assert second is not None
     assert second.commit_sha == "bbbbbbb"
