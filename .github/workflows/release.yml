@@ -472,7 +472,7 @@ jobs:
             --prune \
             --prune-depth=5
 
-      - name: Generate .flatpakrepo, .flatpakref, landing page
+      - name: Generate .flatpakrepo, .flatpakref, landing page (bootstrap only)
         run: |
           # ── Export public key for embedding in .flatpakrepo files ─────────
           GPG_KEY_B64=$(gpg --homedir="$GPG_HOME" --export "$GPG_KEYID" | base64 -w 0)
@@ -524,7 +524,11 @@ jobs:
           IsRuntime=false
           EOF
 
-          # ── Landing page ──────────────────────────────────────────────────
+          # ── Landing page — bootstrap only, never overwrite a custom page ──
+          # Generated once on the first publish (when gh-pages has no
+          # index.html). Edit index.html directly in the todevelopers/flatpaks
+          # gh-pages branch to customise it; subsequent CI runs leave it alone.
+          if [ ! -f flatpaks-pub/index.html ]; then
           cat > flatpaks-pub/index.html <<'EOF'
           <!DOCTYPE html>
           <html lang="en">
@@ -590,6 +594,9 @@ jobs:
           </body>
           </html>
           EOF
+          else
+            echo "index.html already exists in gh-pages — leaving custom landing page untouched"
+          fi
 
       - name: Commit and push to flatpaks gh-pages
         run: |
