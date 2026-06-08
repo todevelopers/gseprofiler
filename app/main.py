@@ -254,9 +254,14 @@ class MainWindow(Adw.ApplicationWindow):
         self._paned.set_resize_start_child(False)
         self._paned.set_resize_end_child(True)
         self._paned.set_shrink_start_child(True)
-        self._paned.set_shrink_end_child(True)
+        # The content pane holds the header (window controls / close button) and
+        # the log-viewer filter row (start/stop button). Gtk.Paned reports a 1px
+        # minimum regardless, so letting the end child shrink would clip those
+        # right-edge controls whenever the window or sidebar split leaves it
+        # below its real minimum. Keep it pinned at its minimum and let the
+        # collapsible sidebar (start child) yield the space instead.
+        self._paned.set_shrink_end_child(False)
         self._sidebar_toolbar.set_size_request(180, -1)
-        content_toolbar.set_size_request(360, -1)
         self._paned.connect("notify::position", self._on_paned_position_changed)
 
         self.set_content(self._paned)
