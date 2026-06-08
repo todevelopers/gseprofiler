@@ -363,12 +363,12 @@ class LogViewerView(Gtk.Box):
 
         filter_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         filter_bar.add_css_class("log-filterbar")
-        filter_bar.append(_make_info_icon(_SEARCH_HELP))
         filter_bar.append(self._search_entry)
         filter_bar.append(self._auto_scroll_btn)
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         filter_bar.append(sep)
+        filter_bar.append(_make_info_icon(_SEARCH_HELP))
         filter_bar.append(self._copy_btn)
         filter_bar.append(export_btn)
         filter_bar.append(clear_btn)
