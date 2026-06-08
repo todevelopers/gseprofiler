@@ -949,12 +949,16 @@ class LogViewerView(Gtk.Box):
         btn.connect("toggled", self._on_inline_chip_toggled, tag)
         return btn
 
-    def _on_tag_bar_width_changed(self, _width: int) -> None:
-        # Coalesce the burst of allocations during a resize drag into a single
-        # rebuild on the next idle tick.
+    def _schedule_chips_rebuild(self) -> None:
+        """Coalesce a burst of rebuild triggers (resize-drag allocations, a
+        flood of entries growing chip counts) into one rebuild on the next
+        idle tick."""
         if not self._chips_rebuild_pending:
             self._chips_rebuild_pending = True
             GLib.idle_add(self._chips_rebuild_idle)
+
+    def _on_tag_bar_width_changed(self, _width: int) -> None:
+        self._schedule_chips_rebuild()
 
     def _chips_rebuild_idle(self) -> bool:
         self._chips_rebuild_pending = False
@@ -1387,6 +1391,10 @@ class LogViewerView(Gtk.Box):
             self._pin_chip.set_label(
                 f"{self._pin_tag} {self._tag_counts.get(self._pin_tag, 0)}"
             )
+        # Growing counts widen the labels, so the shown chips may no longer
+        # fit the bar. Re-fit on the next idle (coalesced) instead of letting
+        # the in-place labels drift past the available width.
+        self._schedule_chips_rebuild()
 
     def _update_status_label(self) -> None:
         visible = self._store.get_n_items()
