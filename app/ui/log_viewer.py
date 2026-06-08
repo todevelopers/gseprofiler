@@ -189,6 +189,24 @@ class _TagBarLayout(Gtk.BoxLayout):
             if self.on_width_changed is not None:
                 self.on_width_changed(width)
 
+    def do_measure(
+        self, widget: Gtk.Widget, orientation: Gtk.Orientation, for_size: int
+    ) -> tuple[int, int, int, int]:
+        # The bar trims its own chips to whatever width it is allocated, so it
+        # must never report the full (un-trimmed) chip run as its horizontal
+        # request. Reporting the real minimum (the sum of all non-shrinkable
+        # chips) would force the toplevel window wider than the screen, push
+        # chips past the window edge, and — since the bar is then allocated
+        # that ballooned width — defeat the fit logic entirely. The bar is
+        # FILL inside a vertical box, so it still receives the real window
+        # width via do_allocate regardless of what it requests here.
+        if orientation == Gtk.Orientation.HORIZONTAL:
+            return 0, 0, -1, -1
+        return cast(
+            "tuple[int, int, int, int]",
+            Gtk.BoxLayout.do_measure(self, widget, orientation, for_size),
+        )
+
 
 class LogViewerView(Gtk.Box):
     """Live journalctl log viewer with structured column-view rendering."""
@@ -461,6 +479,10 @@ class LogViewerView(Gtk.Box):
         bar.set_layout_manager(self._tag_bar_layout)
         self._tag_bar_layout.on_width_changed = self._on_tag_bar_width_changed
         bar.add_css_class("log-tagbar")
+        # Clip any chips added transiently before the next idle re-trim (the
+        # fit logic runs all chips through once when the bar is not yet
+        # allocated) so they never paint beyond the bar's allocated width.
+        bar.set_overflow(Gtk.Overflow.HIDDEN)
         self._tag_bar = bar
 
         # Pin chip — always first; updated when selected extension changes
