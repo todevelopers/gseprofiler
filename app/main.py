@@ -253,13 +253,16 @@ class MainWindow(Adw.ApplicationWindow):
         self._paned.set_position(self._sidebar_position)
         self._paned.set_resize_start_child(False)
         self._paned.set_resize_end_child(True)
-        self._paned.set_shrink_start_child(True)
-        # The content pane holds the header (window controls / close button) and
-        # the log-viewer filter row (start/stop button). Gtk.Paned reports a 1px
-        # minimum regardless, so letting the end child shrink would clip those
-        # right-edge controls whenever the window or sidebar split leaves it
-        # below its real minimum. Keep it pinned at its minimum and let the
-        # collapsible sidebar (start child) yield the space instead.
+        # Neither child may shrink below its minimum. Letting the start child
+        # shrink (the old behaviour) made narrowing the window squeeze the
+        # extension list past its 180px floor down to nothing, with no way to
+        # drag it back — worse under Flatpak where the content pane's natural
+        # minimum is larger. With shrink disabled on both sides the 180px
+        # size request below is a hard floor: the list can't be clipped or
+        # collapsed by accident, and the content pane keeps its right-edge
+        # controls (window buttons, log-viewer start/stop). The window's own
+        # minimum size absorbs the rest.
+        self._paned.set_shrink_start_child(False)
         self._paned.set_shrink_end_child(False)
         self._sidebar_toolbar.set_size_request(180, -1)
         self._paned.connect("notify::position", self._on_paned_position_changed)
