@@ -171,11 +171,11 @@ Phases 6–11 go beyond V1 with constructive additions.
 
 ### GitHub repository prep
 
-- [ ] README with screenshots, feature list, and quick-start instructions
-- [ ] AppStream metadata (`app/data/org.gnome.GSEProfiler.appdata.xml`)
-- [ ] `.desktop` entry (`gse-profiler.desktop`)
-- [ ] Icon set: SVG master + rasterised 48 / 64 / 128 px PNG
-- [ ] `CHANGELOG.md` for v1.0.0
+- [x] README with screenshots, feature list, and quick-start instructions
+- [x] AppStream metadata (`data/io.github.todevelopers.GseProfiler.metainfo.xml`)
+- [x] `.desktop` entry (`data/io.github.todevelopers.GseProfiler.desktop`)
+- [x] Icon set: SVG master (`app/data/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg`)
+- [x] `CHANGELOG.md` for v1.0.0
 
 ## Packaging & distribution
 
@@ -199,26 +199,26 @@ Phases 6–11 go beyond V1 with constructive additions.
 
 ---
 
-## 🚀 V1 Release
+## 🚀 V1 Release ✅
 
-> Pre-release tasks complete → tag `v1.0.0`, publish GitHub Release with Flatpak bundle + changelog.
+> **Released:** v1.0.0 (2026-05-21) · v1.0.1 (2026-05-24, Flathub publish fix — replaced `flatpak-spawn journalctl` with `systemd.journal.Reader`).
 
 ---
 
-## Phase 6: Clone from GitHub (V2)
+## Phase 6: Install from GitHub ✅
 
 **Goal:** Install GNOME Shell extensions directly from a GitHub URL.
 
-- [ ] `app/core/git_manager.py`
-  - `clone(url, target_path)` — spawn `git clone`, stream output
-  - `pull(path)` — spawn `git pull`, stream output
-  - Read `metadata.json` after clone to extract UUID and name
-- [ ] Clone dialog (`AdwDialog`)
-  - Input: GitHub URL
-  - Live progress display (stream git stdout)
-  - After success: show extension name + UUID, offer to enable
-- [ ] Extensions cloned this way get an "Update" action in Extension Manager
-- [ ] Error handling: invalid URL, git not installed, network failure, UUID conflict
+> **Implementation note:** Diverged from original spec — uses tarball download (`Soup.Session`) instead of `git clone`, so no `git` dependency is required. Provenance is tracked in a local registry (`source_registry.py`) rather than in `metadata.json`.
+
+- [x] `app/core/github_installer.py` — download default-branch tarball, validate `metadata.json`, extract, compile GSettings schemas, record source commit SHA
+- [x] `app/core/github_source.py` + `app/core/source_registry.py` — per-extension provenance (repo URL, installed SHA, subdirectory)
+- [x] Install dialog (`app/ui/github_install_dialog.py`) — GitHub URL input, per-stage progress display, show extension name + UUID after success, prompt logout
+- [x] Subdirectory URL support — install from `github.com/user/repo/tree/branch/subdir`
+- [x] "Check for Updates" action in `app/ui/details_view.py` — compares installed SHA with latest default-branch SHA, auto-reinstalls if newer
+- [x] "Uninstall" action for all user extensions in `details_view.py`
+- [x] Update indicator folded into status dot in `app/ui/extension_list.py`
+- [x] Error handling: invalid URL, network failure, UUID conflict, missing `metadata.json`
 
 ---
 
@@ -446,6 +446,113 @@ A standard GTK4 app cannot capture keys while it has no focus — and on Wayland
 
 ---
 
+## Phase 14: Bridge Hardening & Event Batching (V2 prerequisite)
+
+**Goal:** Fix latent bridge bugs and make the profiling pipeline robust enough for the
+higher event volume of Phase 7. Should land **before** memory profiling — it builds on
+the same socket pipeline.
+
+### Latent bugs (from 2026-06 code review)
+
+- [ ] `profiler.js` — `_dbg()` calls `bridgeLog`, which is not imported (only
+      `bridgeLogError` / `bridgeLogWarning` are); a `ReferenceError` waits for the first
+      `DEBUG = true` session
+- [ ] `Profiler.stopProfiling()` — when the original function came from the prototype,
+      restore with `delete holder[name]` instead of assigning an own property; the patch
+      currently leaves an own-property shadow on the instance after restore
+- [ ] `inspector.js` — getters are invoked eagerly during serialization; GObject getters
+      can have side effects, so opening the Inspector can mutate the inspected extension.
+      Report getters lazily (`type: "getter"`) and evaluate only on an explicit
+      "invoke getter" action
+
+### Event batching
+
+- [ ] Bridge: buffer profile events and flush as
+      `{ type: "profile_batch", events: [...] }` every ~50 ms or after N events — today
+      every wrapped call does its own socket write from inside `gnome-shell`, so profiling
+      a hot path floods the shell's main loop and skews the measurement
+- [ ] App: handle `profile_batch` in `profiler_view.py` (keep accepting single
+      `profile_event` for backward compatibility)
+
+### Async function profiling
+
+- [ ] Wrapper: detect a `Promise` return value and tag the event `async: true` — today the
+      event closes in `finally` when the synchronous part returns, so async methods report
+      setup cost, not end-to-end latency
+- [ ] Track settle time: attach `.finally()` to the returned promise and record an
+      `asyncEnd` timestamp (extended event schema or a follow-up event)
+- [ ] UI: distinguish async events visually (badge in tooltip / hatched bar)
+- [x] README: documented that only the synchronous portion is measured
+
+### Protocol versioning
+
+- [ ] App validates `hello.version` on handshake; on mismatch the connection chip shows
+      **Bridge outdated** instead of Connected (covers the "user skipped the logout, old
+      bridge still running" case the install-time bundle-hash check cannot catch)
+
+---
+
+## Phase 15: Refactoring Pass
+
+**Goal:** Pay down structural debt before phases 7 / 11 / 12 grow the codebase further.
+
+- [ ] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`,
+      mirroring the `app/ui/profiler/` split — natural seams: capture panel, tag bar +
+      chip fitting, list-view factories, main view
+- [ ] Unify settings persistence — `_settings_path` / `_load_settings` / `_save_settings`
+      are duplicated in `profiler_view.py` and `log_viewer.py` with diverging merge
+      semantics → single `app/core/settings.py` (becomes the seam for the Phase 9
+      GSettings backend)
+- [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to
+      `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the
+      Flatpak manifest and the Phase 10 RPM spec)
+- [ ] `socket_server.py` — extract `_reset_connection()`; the connection-teardown block is
+      copy-pasted 3× (error path, EOF path, `stop()`)
+- [ ] Typed message router — replace per-view `message-received` filtering with
+      `router.on("profile_event", cb)`-style registration before phases 7 / 11 / 12 add
+      more message types
+- [ ] Delete `tests/test_placeholder.py` (Phase 0 leftover)
+
+---
+
+## Phase 16: Profile Export & Analysis
+
+**Goal:** Get more answers out of the event data the profiler already records.
+
+- [ ] Export to **speedscope** JSON (and/or Firefox Profiler format) — just an alternate
+      serializer over existing events; users get a powerful external viewer for free.
+      Cheapest high-value item in the backlog
+- [ ] Aggregated flame graph view — merged stacks answering *"where does time go
+      overall"*, complementing the existing time-axis views
+- [ ] Percentile columns (p95 / p99) in the call table — raw events are already retained
+- [ ] Shell crash detection during profiling — distinguish a clean disconnect from
+      "shell died mid-recording"; offer to save the collected data and re-arm
+      automatically after reconnect
+
+---
+
+## Phase 17: Install from extensions.gnome.org
+
+**Goal:** Support the place where GNOME extensions actually live, not just GitHub.
+
+- [ ] Download via the EGO REST API (zip), reuse the provenance registry from the GitHub
+      installer
+- [ ] Unified "Add extension" flow — one dialog accepting a GitHub URL or an EGO URL /
+      search query
+
+---
+
+## Backlog (unscheduled)
+
+- Periodic GitHub update re-check — today the check runs once at startup
+  (`main.py`, `_on_ready_for_update_check`); a `GLib.timeout_add_seconds` re-check every
+  few hours is a trivial add
+- Log ↔ profiler time correlation — both views share a time axis; clicking a profile
+  event could jump to the journal lines from the same instant. No other GNOME tool has
+  this
+
+---
+
 ## Deferred — opt-in Developer API
 
 > **Status: deferred indefinitely.** The core tooling covers the developer use-case well enough for V1 and V2. Revisit only if there is concrete demand.
@@ -459,6 +566,17 @@ A standard GTK4 app cannot capture keys while it has no focus — and on Wayland
 
 ---
 
+## Recommended Ordering (2026-06 review)
+
+1. **Phase 14** — bridge bug fixes + event batching; prerequisite for Phase 7, which
+   pushes much more data through the same socket
+2. **Phase 15** — log_viewer split + settings unification, while the surface is still small
+3. **Phase 16** — speedscope export first (cheapest, highest leverage), then the rest
+4. **Phases 9 and 12** from the existing plan
+5. **Phase 7** (memory profiling) only after Phase 14 has landed
+
+---
+
 ## Milestone Summary
 
 | Phase | Milestone            | Scope                                 | Status       |
@@ -469,9 +587,9 @@ A standard GTK4 app cannot capture keys while it has no focus — and on Wayland
 | 3     | Log Viewer           | Live filtered logs                    | ✅ done       |
 | 4     | Profiler V1          | Timing table + flame graph            | ✅ done       |
 | 5     | Inspector            | stateObj live view (R/O)              | ✅ done       |
-| —     | Pre-release          | Polish, GitHub, Flatpak               | in progress  |
-| —     | **V1 Release**       | **tag v1.0.0**                        | **upcoming** |
-| 6     | GitHub clone         | Install extensions (V2)               | planned      |
+| —     | Pre-release          | Polish, GitHub, Flatpak               | ✅ done       |
+| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                   | ✅ done       |
+| 6     | GitHub install       | Install extensions from GitHub        | ✅ done       |
 | 7     | Memory profiling     | Heap analysis (V2)                    | planned      |
 | 8     | Health checks        | Linting + validation (V2+)            | planned      |
 | 9     | Settings             | Preferences window (V2+)              | planned      |
@@ -479,4 +597,8 @@ A standard GTK4 app cannot capture keys while it has no focus — and on Wayland
 | 11    | Inspector writable   | Full property editing (V2+)           | planned      |
 | 12    | Startup profiling    | Profile enable() ramp-up (V2+)        | planned      |
 | 13    | Global shortcuts     | Toggle profiling via keybinding (V2+) | planned      |
+| 14    | Bridge hardening     | Bug fixes, batching, async profiling  | planned      |
+| 15    | Refactoring pass     | log_viewer split, settings, packaging | planned      |
+| 16    | Export & analysis    | speedscope, merged flame graph        | planned      |
+| 17    | EGO install          | Install from extensions.gnome.org     | planned      |
 | —     | opt-in Developer API | Extension author integration          | deferred ∞   |
