@@ -2,7 +2,7 @@
 
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { bridgeLog, bridgeLogError } from './logger.js';
+import { bridgeLogError, bridgeLogWarning } from './logger.js';
 
 const DEBUG = false;
 function _dbg(...args) { if (DEBUG) { bridgeLog(args.join(' ')); } }
@@ -57,7 +57,7 @@ export class Profiler {
         const ext = Main.extensionManager.lookup(uuid);
         _dbg(`startProfiling: lookup=${!!ext} state=${ext?.state} stateObj=${!!ext?.stateObj}`);
         if (!ext?.stateObj) {
-            bridgeLog(`startProfiling: no stateObj for ${uuid}`);
+            bridgeLogWarning(`startProfiling: no stateObj for ${uuid}`);
             return false;
         }
 
@@ -106,9 +106,7 @@ export class Profiler {
         }
 
         if (this.#patches.size === 0) {
-            bridgeLog(`WARNING: 0 functions patched for ${uuid} — extension may use closures or GObject vfuncs`);
-        } else {
-            bridgeLog(`profiling started: ${uuid} (${this.#patches.size} patched)`);
+            bridgeLogWarning(`0 functions patched for ${uuid} — extension may use closures or GObject vfuncs`);
         }
         return true;
     }
@@ -129,7 +127,6 @@ export class Profiler {
         this.#running = false;
         this.#targetUuid = null;
         this.#callDepth = 0;
-        bridgeLog('profiling stopped');
     }
 
     // ── Private ───────────────────────────────────────────────────────────

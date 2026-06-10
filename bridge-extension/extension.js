@@ -4,7 +4,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { SocketClient } from './socket_client.js';
 import { Profiler } from './profiler.js';
 import { Inspector } from './inspector.js';
-import { bridgeLog } from './logger.js';
+import { bridgeLog, bridgeLogWarning } from './logger.js';
 
 const DEBUG = false;
 function _dbg(...args) { if (DEBUG) { bridgeLog(args.join(' ')); } }
@@ -22,8 +22,6 @@ export default class GSEProfilerBridge extends Extension {
     _inspector = null;
 
     enable() {
-        bridgeLog('Enabled');
-
         this._profiler = new Profiler(event => {
             this._socketClient?.send(event);
         });
@@ -35,8 +33,6 @@ export default class GSEProfilerBridge extends Extension {
     }
 
     disable() {
-        bridgeLog('Disabled');
-
         if (this._profiler) {
             this._profiler.stopProfiling();
             this._profiler = null;
@@ -75,7 +71,7 @@ export default class GSEProfilerBridge extends Extension {
             break;
         }
         default:
-            bridgeLog(`unhandled message type: ${msg.type}`);
+            bridgeLogWarning(`unhandled message type: ${msg.type}`);
         }
     }
 }

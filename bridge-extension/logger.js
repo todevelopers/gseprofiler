@@ -14,6 +14,13 @@ export function bridgeLog(message) {
     });
 }
 
+/** @param {string} message */
+export function bridgeLogWarning(message) {
+    GLib.log_structured(LOG_DOMAIN, GLib.LogLevelFlags.LEVEL_WARNING, {
+        MESSAGE: String(message),
+    });
+}
+
 /**
  * Structured equivalent of logError(): keeps the message and the error's
  * stack/text, attributed to the bridge domain at critical (non-fatal) level.

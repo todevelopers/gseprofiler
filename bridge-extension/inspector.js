@@ -1,7 +1,7 @@
 'use strict';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { bridgeLog, bridgeLogError } from './logger.js';
+import { bridgeLogError, bridgeLogWarning } from './logger.js';
 
 const _MAX_CHILDREN = 50;
 const _MAX_STRING_LEN = 200;
@@ -21,20 +21,20 @@ export class Inspector {
     inspect(uuid, path = []) {
         const ext = Main.extensionManager.lookup(uuid);
         if (!ext?.stateObj) {
-            bridgeLog(`inspector: no stateObj for ${uuid}`);
+            bridgeLogWarning(`inspector: no stateObj for ${uuid}`);
             return { properties: [] };
         }
         try {
             let obj = ext.stateObj;
             for (const key of path) {
                 if (obj === null || obj === undefined || typeof obj !== 'object') {
-                    bridgeLog(`inspector: path resolution failed at key "${key}"`);
+                    bridgeLogWarning(`inspector: path resolution failed at key "${key}"`);
                     return { properties: [] };
                 }
                 obj = obj[key];
             }
             if (obj === null || obj === undefined || typeof obj !== 'object') {
-                bridgeLog(`inspector: resolved path is not an object`);
+                bridgeLogWarning(`inspector: resolved path is not an object`);
                 return { properties: [] };
             }
             // Arrays are serialized by index so the user sees elements, not prototype methods.

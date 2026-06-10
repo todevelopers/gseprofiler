@@ -2,7 +2,7 @@
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
-import { bridgeLog, bridgeLogError } from './logger.js';
+import { bridgeLogError, bridgeLogWarning } from './logger.js';
 
 const SOCKET_SUBDIR = 'gse-profiler';
 const SOCKET_NAME = 'gse-profiler.sock';
@@ -116,16 +116,13 @@ export class SocketClient {
     }
 
     #doConnect() {
-        const path = _socketPath();
-        bridgeLog(`socket connect attempt: ${path}`);
-        const addr = Gio.UnixSocketAddress.new(path);
+        const addr = Gio.UnixSocketAddress.new(_socketPath());
         const client = new Gio.SocketClient();
         client.connect_async(addr, null, (obj, result) => {
             try {
                 const conn = obj.connect_finish(result);
                 this.#onConnected(conn);
-            } catch (e) {
-                bridgeLog(`socket connect failed: ${e.message}`);
+            } catch (_e) {
                 if (!this.#stopping) {
                     this.#scheduleConnect(RECONNECT_DELAY_MS);
                 }
@@ -134,7 +131,6 @@ export class SocketClient {
     }
 
     #onConnected(connection) {
-        bridgeLog(`socket connected: ${_socketPath()}`);
         this.#connection = connection;
         this.#connected = true;
         this.#cancellable = Gio.Cancellable.new();
@@ -176,7 +172,7 @@ export class SocketClient {
                         this.#onMessage(msg);
                     }
                 } catch (_e) {
-                    bridgeLog(`invalid JSON from app: ${trimmed}`);
+                    bridgeLogWarning(`invalid JSON from app: ${trimmed}`);
                 }
             }
             this.#readNextLine(stream);
@@ -184,13 +180,11 @@ export class SocketClient {
     }
 
     #onDisconnected() {
-        bridgeLog('socket disconnected');
         this.#connected = false;
         this.#connection = null;
         this.#outputStream = null;
         this.#cancellable = null;
         if (!this.#stopping) {
-            bridgeLog(`reconnecting in ${RECONNECT_DELAY_MS}ms`);
             this.#scheduleConnect(RECONNECT_DELAY_MS);
         }
     }
