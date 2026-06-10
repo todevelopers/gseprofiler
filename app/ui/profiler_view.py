@@ -20,6 +20,7 @@ from app.core.socket_server import SocketServer
 from app.ui.profiler import desaturate_color
 from app.ui.profiler.flamegraph import FlamegraphView
 from app.ui.profiler.histogram import HistogramView
+from app.ui.profiler.stat_card import StatCard, StatCardStrip
 from app.ui.profiler.swimlane import SwimlaneView
 
 _log = logging.getLogger(__name__)
@@ -445,76 +446,43 @@ class ProfilerView(Gtk.Stack):
     # ── Stat cards ────────────────────────────────────────────────────────
 
     def _build_stat_cards(self) -> Gtk.Widget:
-        cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        cards.set_homogeneous(True)
+        strip = StatCardStrip(spacing=10)
 
-        def _card() -> tuple[Gtk.Box, Gtk.Label, Gtk.Label, Gtk.Label]:
-            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            card.add_css_class("prof-stat-card")
-            card.set_hexpand(True)
-            label = Gtk.Label(xalign=0.0)
-            label.add_css_class("prof-stat-label")
-            value = Gtk.Label(xalign=0.0)
-            value.add_css_class("prof-stat-value")
-            value.set_ellipsize(Pango.EllipsizeMode.END)
-            delta = Gtk.Label(xalign=0.0)
-            delta.add_css_class("prof-stat-delta")
-            delta.set_ellipsize(Pango.EllipsizeMode.END)
-            card.append(label)
-            card.append(value)
-            card.append(delta)
-            return card, label, value, delta
+        # Order: numbers first, the truncation-prone function-name card last.
+        self._card_calls = StatCard("Total calls")
+        self._card_wall = StatCard("Wall time")
+        self._card_max = StatCard("Max call", sub_growable=True)
+        self._card_hot = StatCard("Hottest function", mono_value=True, value_growable=True)
 
-        c1, l1, v1, d1 = _card()
-        l1.set_text("Total calls")
-        self._card_calls_value, self._card_calls_sub = v1, d1
-        cards.append(c1)
+        for card in (self._card_calls, self._card_wall, self._card_max, self._card_hot):
+            strip.add_card(card)
 
-        c2, l2, v2, d2 = _card()
-        l2.set_text("Wall time")
-        self._card_wall_value, self._card_wall_sub = v2, d2
-        cards.append(c2)
-
-        c3, l3, v3, d3 = _card()
-        l3.set_text("Hottest function")
-        v3.add_css_class("mono")
-        self._card_hot_value, self._card_hot_sub = v3, d3
-        cards.append(c3)
-
-        c4, l4, v4, d4 = _card()
-        l4.set_text("Max call")
-        self._card_max_value, self._card_max_sub = v4, d4
-        cards.append(c4)
-
-        cards.set_size_request(0, -1)
         # Initialise to "no data" placeholders.
         self._update_stat_cards()
-        return cards
+        return strip
 
     def _update_stat_cards(self) -> None:
         n_calls = sum(s.count for s in self._stats.values())
         wall_ms = sum(s.total_ms for s in self._stats.values())
-        self._card_calls_value.set_text(f"{n_calls:,}".replace(",", " "))
-        self._card_calls_sub.set_text(f"across {len(self._stats)} functions")
+        self._card_calls.set_value(f"{n_calls:,}".replace(",", " "))
+        self._card_calls.set_sub(f"across {len(self._stats)} functions")
 
-        self._card_wall_value.set_text(_fmt_ms(wall_ms))
-        self._card_wall_sub.set_text("sum of all invocations")
+        self._card_wall.set_value(_fmt_ms(wall_ms))
+        self._card_wall.set_sub("sum of all invocations")
 
         if self._stats:
             hot = max(self._stats.values(), key=lambda s: s.total_ms)
-            self._card_hot_value.set_text(hot.name)
-            self._card_hot_value.set_tooltip_text(hot.name)
-            self._card_hot_sub.set_text(f"{_fmt_ms(hot.total_ms)} · {hot.count} calls")
+            self._card_hot.set_value(hot.name, tooltip=hot.name)
+            self._card_hot.set_sub(f"{_fmt_ms(hot.total_ms)} · {hot.count} calls")
 
             worst = max(self._stats.values(), key=lambda s: s.max_ms)
-            self._card_max_value.set_text(_fmt_ms(worst.max_ms))
-            self._card_max_sub.set_text(worst.name)
-            self._card_max_sub.set_tooltip_text(worst.name)
+            self._card_max.set_value(_fmt_ms(worst.max_ms))
+            self._card_max.set_sub(worst.name, tooltip=worst.name)
         else:
-            self._card_hot_value.set_text("—")
-            self._card_hot_sub.set_text("no data")
-            self._card_max_value.set_text("—")
-            self._card_max_sub.set_text("no data")
+            self._card_hot.set_value("—")
+            self._card_hot.set_sub("no data")
+            self._card_max.set_value("—")
+            self._card_max.set_sub("no data")
 
     # ── Timeline panel (3 modes) ──────────────────────────────────────────
 
