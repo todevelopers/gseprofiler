@@ -80,6 +80,9 @@ functions per frame may see a measurable slowdown during recording.
 - GObject virtual functions (vfuncs)
 - Closures stored in plain variables (not reachable by property enumeration)
 - Functions added dynamically after profiling starts
+- **Async timing:** an `async` function is recorded only until it returns its `Promise` —
+  usually at the first `await`. Time spent waiting and the continuations that run after each
+  `await` are not included in the event's duration, so async methods show their synchronous setup cost, not their end-to-end latency.
 
 ### Limits
 
