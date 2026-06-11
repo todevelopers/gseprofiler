@@ -237,6 +237,13 @@ decides which path runs.
 Add a `## [X.Y.Z]` section at the top of `CHANGELOG.md`. Use `### Fixed` /
 `### Changed` / `### Added` sub-headings with `- bullet` items.
 
+> **Keep every bullet on ONE physical line — do not wrap bullets across
+> multiple lines.** The metainfo converter (Step 2 `version-bump`) treats
+> only lines starting with `- `/`* ` as `<li>`; a wrapped continuation line
+> becomes a stray standalone `<p>` between `</ul>` and `<ul>`, producing
+> broken sentence-fragment output in GNOME Software. This bit the v1.1.0
+> release. Lines may be long; that's fine.
+
 > **IMPORTANT for the agent:** Before writing anything to `CHANGELOG.md`,
 > always show the user a preview of the exact text to be written and wait
 > for explicit confirmation before proceeding.
