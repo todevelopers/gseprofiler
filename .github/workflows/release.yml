@@ -292,7 +292,10 @@ jobs:
           if ! git diff --quiet build-aux/io.github.todevelopers.GseProfiler.yml; then
             git add build-aux/io.github.todevelopers.GseProfiler.yml
             git commit -m "chore: update Flatpak manifest to v${{ needs.detect.outputs.version }} [skip ci]"
-            git push origin main
+            # checkout was done at version-bump.sha → detached HEAD, so push the
+            # new commit explicitly to the main branch (plain "main" refspec
+            # fails with "src refspec main does not match any" when detached).
+            git push origin HEAD:main
           fi
 
       # ── PRERELEASE ONLY: patch _BASE_VERSION so installed app reports the
