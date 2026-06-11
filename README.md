@@ -9,14 +9,17 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/tommygunx89)
 
-An all-in-one developer toolkit for GNOME Shell extension authors — built as a native
-GTK4 / libadwaita app that fits right into your desktop.
+A developer toolkit for people who write GNOME Shell extensions. It's a native
+GTK4 / libadwaita app, so it looks and behaves like the rest of your desktop instead of
+some dev tool bolted on the side.
 
-GSE Profiler installs a lightweight bridge extension inside the running shell process and instruments
-your extension at runtime, with **zero changes to your code**. Profile function timing and
-visualise it as a **flamegraph** (call tree and timing), **swimlane** (when and how often each function runs), or **histogram** (where time is actually spent). Filter and search live logs
-scoped to a single extension UUID. Inspect the live state of any running extension object:
-browse properties, see current values, and drill into nested objects on the fly.
+The way it works: it drops a small bridge extension into the running shell and instruments
+your extension at runtime, without you touching a single line of your own code. From there
+you can profile function timing and look at it as a **flamegraph** (the call tree and timing),
+a **swimlane** (when and how often each function runs), or a **histogram** (where the time
+actually goes). Logs get filtered down to one extension UUID so you're not digging through the
+whole journal, and the inspector lets you open up any running extension object and walk its
+properties, values and nested objects while it runs.
 
 ---
 
@@ -25,7 +28,7 @@ browse properties, see current values, and drill into nested objects on the fly.
 | Feature               | Description                                                                                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Extension Manager** | Browse all installed extensions with status, enable/disable with one click, open the source folder directly                                                 |
-| **Log Viewer**        | Live systemd journal stream — captures the `gnome-shell` process by default (where all extensions run); structured capture controls (scope, boot, source preset, priority) with a power-user raw `journalctl` override; filter by log level, extension tag, and full-text search in real time |
+| **Log Viewer**        | Live systemd journal stream. Captures the `gnome-shell` process by default (that's where all extensions actually run), with structured capture controls (scope, boot, source preset, priority) and a raw `journalctl` override when you want full control. Filter by log level, extension tag, and full-text search in real time |
 | **Profiler**          | Monkey-patch any extension at runtime. No code changes needed. Visualise timing as a flamegraph, swimlane, or histogram; export and reload sessions as JSON |
 | **Inspector**         | Inspect a live extension object: browse its properties and methods, see current values, and call methods interactively                                      |
 
@@ -40,16 +43,16 @@ browse properties, see current values, and drill into nested objects on the fly.
   </picture>
 </p>
 
-GSE Profiler is split into two parts: a **GTK4 app** (Python) and a **bridge GJS extension**
-(`gse-profiler-bridge@todevelopers`) that the app auto-installs on first launch. The bridge
-runs inside the `gnome-shell` process itself — giving it direct, in-process access to every
-loaded extension's live objects and functions.
+There are two parts: a **GTK4 app** (Python) and a **bridge GJS extension**
+(`gse-profiler-bridge@todevelopers`) that the app installs for you on first launch. The
+bridge runs inside the `gnome-shell` process itself, which is what gives it direct,
+in-process access to every loaded extension and its live objects and functions.
 
-GNOME Shell must be restarted once after the bridge is installed: the app
-prompts you to log out and back in (Wayland-only — X11 sessions are not
-supported).
+You have to restart GNOME Shell once after the bridge lands. The app just asks you to log out
+and back in (Wayland only; X11 sessions aren't supported).
 
-The main window shows a live connection indicator so you always know whether the bridge is reachable.
+The main window has a live connection indicator, so you always know whether the bridge is
+actually talking to the app.
 
 ### Communication
 
@@ -58,17 +61,17 @@ The app and bridge talk over a **Unix domain socket**
 initiates the connection and reconnects automatically after a failure (3 s delay). On connect
 it sends a `hello` handshake; from that point the app can start a profiling or inspection session.
 
-Standard extension management — listing, enabling, disabling — uses the regular
-`org.gnome.Shell.Extensions` **D-Bus** interface. The socket exists only for
-data that D-Bus is not suited for: high-frequency profiling events and live inspection results.
-No elevated permissions are required for either path.
+Standard extension management (listing, enabling, disabling) goes through the regular
+`org.gnome.Shell.Extensions` **D-Bus** interface. The socket is only there for the stuff
+D-Bus is bad at: high-frequency profiling events and live inspection results. Neither path
+needs elevated permissions.
 
 ### Monkey-patching and overhead
 
-When you start profiling, the bridge walks the extension's `stateObj` — its full prototype
-chain and one level of owned child objects (e.g. `_indicator`) — and wraps every enumerable
-function it finds. No changes to your extension's source are needed; all patches are
-fully reversed when you stop.
+When you start profiling, the bridge walks the extension's `stateObj` (its full prototype
+chain plus one level of owned child objects, like `_indicator`) and wraps every enumerable
+function it finds. You don't change anything in your extension's source, and all the patches
+are fully reversed the moment you stop.
 
 Each wrapped call adds two `GLib.get_monotonic_time()` reads (microsecond precision) and
 queues one JSON event for the socket. For a typical GNOME Shell extension the overhead is
@@ -80,9 +83,10 @@ functions per frame may see a measurable slowdown during recording.
 - GObject virtual functions (vfuncs)
 - Closures stored in plain variables (not reachable by property enumeration)
 - Functions added dynamically after profiling starts
-- **Async timing:** an `async` function is recorded only until it returns its `Promise` —
-  usually at the first `await`. Time spent waiting and the continuations that run after each
-  `await` are not included in the event's duration, so async methods show their synchronous setup cost, not their end-to-end latency.
+- **Async timing:** an `async` function is only recorded until it returns its `Promise`,
+  usually at the first `await`. The time spent waiting, and the continuations that run after
+  each `await`, don't count toward the event's duration. So async methods show their
+  synchronous setup cost, not their real end-to-end latency.
 
 ### Limits
 
@@ -96,19 +100,19 @@ functions per frame may see a measurable slowdown during recording.
 
 ### Profiler views
 
-All three views work on the same event data — they just answer different questions:
+All three views run on the same event data, they just answer different questions:
 
-**Flamegraph** — call tree laid out on a real-time axis. Each bar is one call; width equals
-duration; nesting shows caller/callee depth. Best for understanding *what called what* and
-spotting unexpectedly deep or wide call stacks.
+**Flamegraph.** The call tree laid out on a real-time axis. Each bar is one call, width is
+duration, nesting shows caller/callee depth. Best when you want to see *what called what* and
+catch call stacks that are unexpectedly deep or wide.
 
-**Swimlane** — one horizontal lane per function, idle gaps compressed. Each invocation is a
-separate segment on that function's row, so you can see *when and how often* each function
-runs without the call-depth nesting getting in the way.
+**Swimlane.** One horizontal lane per function, with idle gaps squeezed out. Every invocation
+is its own segment on that function's row, so you can see *when and how often* a function runs
+without the call-depth nesting getting in the way.
 
-**Histogram** — functions ranked by *self-time* (wall-clock time spent in the function's own
-code, excluding callees). The fastest answer to *where is time actually being spent?* — it
-filters out time that belongs to the callee, not the caller.
+**Histogram.** Functions ranked by *self-time*, the wall-clock time spent in a function's own
+code, not counting its callees. This is the fastest way to answer *where is the time actually
+going?*, because it ignores time that really belongs to the callee.
 
 ---
 
@@ -121,7 +125,7 @@ filters out time that belongs to the callee, not the caller.
 </p>
 
 <details>
-<summary><b>📸 Screenshots</b> — click to expand</summary>
+<summary><b>📸 Screenshots</b> (click to expand)</summary>
 
 <br>
 
@@ -139,7 +143,7 @@ filters out time that belongs to the callee, not the caller.
 
 > Requires GNOME Shell 46+ in an active **Wayland** GNOME session.
 
-### Option 1 — Flatpak remote (recommended)
+### Option 1: Flatpak remote (recommended)
 
 Add the self-hosted **stable** remote once, then install. You get
 automatic updates with `flatpak update` from then on:
@@ -157,7 +161,7 @@ file, so no `--no-gpg-verify` is needed.
 > Want early test builds (rc/beta)? Add the testing remote instead:
 > `https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo`
 
-### Option 2 — Flatpak bundle
+### Option 2: Flatpak bundle
 
 Prefer a one-off install without adding a remote? Grab the `.flatpak`
 bundle from the
@@ -169,16 +173,15 @@ flatpak install --user gseprofiler-*.flatpak
 flatpak run io.github.todevelopers.GseProfiler
 ```
 
-### Option 3 — One-line source install
+### Option 3: One-line source install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/todevelopers/gseprofiler/main/scripts/setup-and-run.sh | bash
 ```
 
-The script checks for GTK4 / libadwaita, clones the repository to
-`~/gse-profiler`, and launches the app — no `sudo`, no prompts. On
-subsequent runs the same command pulls the latest changes and restarts
-the app.
+The script checks for GTK4 / libadwaita, clones the repo to
+`~/gse-profiler` and launches the app. No `sudo`, no prompts. Run the same
+command again later and it pulls the latest changes and restarts the app.
 
 ### Uninstall
 
@@ -197,7 +200,7 @@ on your system is touched.
 - Python 3.11+
 - GTK 4 and libadwaita 1
 - PyGObject (GTK4 bindings)
-- `python3-systemd` — for the log viewer (`systemd.journal.Reader`); bundled automatically in the Flatpak
+- `python3-systemd`, needed for the log viewer (`systemd.journal.Reader`); bundled automatically in the Flatpak
 
 ---
 
@@ -237,8 +240,8 @@ gse-profiler/
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — development setup,
-local checks, scripts, and CI/release automation.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide: development setup,
+local checks, scripts and CI/release automation.
 
 ---
 
@@ -253,4 +256,4 @@ supporting it on Ko-fi.
 
 ## License
 
-GPL-3.0-or-later — see [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE).
