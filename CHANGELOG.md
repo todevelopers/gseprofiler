@@ -2,40 +2,25 @@
 
 ### Added
 
-- **Install extensions from GitHub** — install a GNOME Shell extension
-  directly from a GitHub repository URL, including repos where the
-  extension lives in a subdirectory. Shows per-stage progress during
-  install and update.
-- **Check for Updates** — on-demand update check per extension with
-  automatic reinstall; the update indicator is now folded into the
-  status dot.
+- **Install extensions from GitHub** — install a GNOME Shell extension directly from a GitHub repository URL, including repos where the extension lives in a subdirectory, with per-stage progress during install and update.
+- **Check for Updates** — on-demand update check per extension with automatic reinstall; the update indicator is now folded into the status dot.
 - **Uninstall** action available for all user-installed extensions.
 - Installed commit row links straight to the commit on GitHub.
-- **Log Viewer** — structured capture controls (defaulting to
-  gnome-shell), log attribution by `GLIB_DOMAIN`, a tag-chip filter bar
-  replacing the old Selected filter, and help tooltips on the filters.
+- **Log Viewer** — structured capture controls (defaulting to gnome-shell), log attribution by `GLIB_DOMAIN`, a tag-chip filter bar replacing the old Selected filter, and help tooltips on the filters.
 
 ### Changed
 
-- **Wayland only** — X11 support dropped to shrink the Flatpak
-  permission surface.
-- Shell restart after bridge install/remove now goes through D-Bus
-  instead of a subprocess script.
+- **Wayland only** — X11 support dropped to shrink the Flatpak permission surface.
+- Shell restart after bridge install/remove now goes through D-Bus instead of a subprocess script.
 - Profiler stat cards reworked with a demand-weighted layout.
-- Extension provenance is now tracked in a dedicated registry instead of
-  `metadata.json`.
-- Bridge logging unified through `GLib.log_structured`; noisy lifecycle
-  logs removed (errors and warnings only).
+- Extension provenance is now tracked in a dedicated registry instead of `metadata.json`.
+- Bridge logging unified through `GLib.log_structured`; noisy lifecycle logs removed (errors and warnings only).
 
 ### Fixed
 
-- GitHub installs now reconcile the registry against what is on disk
-  rather than the live D-Bus list.
-- GSettings schemas are compiled after extracting a GitHub-installed
-  extension.
-- Log Viewer: tag bar no longer overflows the window, re-fits chips when
-  counts grow, captures gnome-shell by executable path, and fixes the
-  tag popover background in dark mode.
+- GitHub installs now reconcile the registry against what is on disk rather than the live D-Bus list.
+- GSettings schemas are compiled after extracting a GitHub-installed extension.
+- Log Viewer: tag bar no longer overflows the window, re-fits chips when counts grow, captures gnome-shell by executable path, and fixes the tag popover background in dark mode.
 - Details panel: "Homepage" no longer wraps character-by-character.
 
 ## [1.0.0] - 2026-05-21
