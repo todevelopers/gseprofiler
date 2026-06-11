@@ -54,6 +54,11 @@ jobs:
             echo "::error::No stable repo/ found on gh-pages — nothing to clean."
             exit 1
           fi
+          # git does not track empty dirs, so refs/remotes is missing after
+          # checkout. ostree refs / build-update-repo enumerate it and fail
+          # with "opendir(refs/remotes): No such file or directory" unless it
+          # exists. Recreate it (mirrors the release workflow's publish step).
+          mkdir -p repo/refs/remotes
 
       - name: Show stable repo refs (before)
         run: ostree --repo=flatpaks-pub/repo refs
