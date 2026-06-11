@@ -1,0 +1,100 @@
+name: Flatpak Repo Maintenance
+
+# One-shot manual cleanup of the self-hosted Flatpak repos on the
+# todevelopers/flatpaks gh-pages branch.
+#
+# Why this exists: before stable and testing were split into separate
+# OSTree repos, prerelease builds were published into the stable repo/
+# with --default-branch=testing. The split moved testing builds to
+# repo-testing/, but the old `testing` refs already baked into repo/ were
+# never removed (build-update-repo --prune drops old commits, not refs).
+# That stray branch makes GNOME Software show a second "stable" source
+# stuck on the old prerelease version.
+#
+# This job deletes every `*/testing` ref from the STABLE repo, prunes,
+# regenerates and re-signs the summary, then pushes gh-pages. It is
+# idempotent and safe to re-run.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clean-stable-repo:
+    name: Remove stray testing branches from stable repo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y flatpak ostree
+
+      - name: Import GPG signing key
+        run: |
+          GPG_HOME=$(mktemp -d)
+          chmod 700 "$GPG_HOME"
+          echo "${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}" | gpg --homedir="$GPG_HOME" --batch --import
+          KEYID=$(gpg --homedir="$GPG_HOME" --list-secret-keys --with-colons | grep '^sec' | cut -d: -f5)
+          echo "GPG_HOME=$GPG_HOME" >> "$GITHUB_ENV"
+          echo "GPG_KEYID=$KEYID" >> "$GITHUB_ENV"
+          echo "Imported signing key: $KEYID"
+
+      - name: Check out flatpaks gh-pages
+        env:
+          FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
+        run: |
+          REMOTE="https://x-access-token:${FLATPAK_REPO_TOKEN}@github.com/todevelopers/flatpaks.git"
+          mkdir -p flatpaks-pub
+          cd flatpaks-pub
+          git init -b gh-pages
+          git remote add origin "$REMOTE"
+          git fetch origin gh-pages
+          git reset --hard FETCH_HEAD
+          if [ ! -f repo/config ]; then
+            echo "::error::No stable repo/ found on gh-pages — nothing to clean."
+            exit 1
+          fi
+
+      - name: Show stable repo refs (before)
+        run: ostree --repo=flatpaks-pub/repo refs
+
+      - name: Delete stray */testing refs from the stable repo
+        run: |
+          # The stable repo must only carry `*/stable` app/runtime refs
+          # (plus appstream). Any `*/testing` ref here is a pre-split
+          # leftover and is removed.
+          STRAY=$(ostree --repo=flatpaks-pub/repo refs | grep '/testing$' || true)
+          if [ -z "$STRAY" ]; then
+            echo "No stray */testing refs in stable repo — already clean."
+          else
+            echo "$STRAY" | while read -r ref; do
+              echo "Deleting stray ref: $ref"
+              ostree --repo=flatpaks-pub/repo refs --delete "$ref"
+            done
+          fi
+
+      - name: Prune, regenerate and re-sign the stable summary
+        run: |
+          flatpak build-update-repo flatpaks-pub/repo \
+            --title="todevelopers Flatpaks" \
+            --gpg-sign="$GPG_KEYID" \
+            --gpg-homedir="$GPG_HOME" \
+            --generate-static-deltas \
+            --prune \
+            --prune-depth=5
+
+      - name: Show stable repo refs (after)
+        run: ostree --repo=flatpaks-pub/repo refs
+
+      - name: Commit and push to flatpaks gh-pages
+        run: |
+          cd flatpaks-pub
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing changed — stable repo was already clean."
+          else
+            git commit -m "Remove stray testing branch from stable repo"
+            git push origin gh-pages
+          fi
