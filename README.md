@@ -4,8 +4,8 @@
 
 # GSE Profiler
 
-[![CI](https://github.com/todevelopers/gse-profiler/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/todevelopers/gse-profiler/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/todevelopers/gse-profiler?cacheSeconds=0)](https://github.com/todevelopers/gse-profiler/releases/latest)
+[![CI](https://github.com/todevelopers/gseprofiler/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/todevelopers/gseprofiler/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/todevelopers/gseprofiler?cacheSeconds=0)](https://github.com/todevelopers/gseprofiler/releases/latest)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/tommygunx89)
 
@@ -119,11 +119,19 @@ filters out time that belongs to the callee, not the caller.
     <img width="720" height="406" alt="gse-profiler-preview" src="https://github.com/user-attachments/assets/775c17be-fd89-44f3-892f-3d2e853f4e64" />
   </picture>
 </p>
+
+<details>
+<summary><b>📸 Screenshots</b> — click to expand</summary>
+
+<br>
+
 <img width="1250" height="810" alt="Flamegraph profiler" src="https://github.com/user-attachments/assets/0789b42d-7ac9-40a2-b1c7-5b6f59f4f7a5" />
 <img width="1250" height="814" alt="Swimlane profiler" src="https://github.com/user-attachments/assets/5c748a07-2dcf-4eec-bdd1-3944cb4ed0fe" />
 <img width="1250" height="814" alt="Histogram profiler" src="https://github.com/user-attachments/assets/fbf80e9a-7a84-449b-9dd1-9cf82382a5e7" />
 <img width="1250" height="818" alt="Extension manager" src="https://github.com/user-attachments/assets/084aceef-e270-46a4-8120-274e519f6cb8" />
 <img width="1250" height="830" alt="Live log viewer" src="https://github.com/user-attachments/assets/74bfa024-e534-43da-8125-f24719e3e092" />
+
+</details>
 
 ---
 
@@ -131,21 +139,40 @@ filters out time that belongs to the callee, not the caller.
 
 > Requires GNOME Shell 46+ in an active **Wayland** GNOME session.
 
-### Option 1 — Flatpak (recommended)
+### Option 1 — Flatpak remote (recommended)
 
-Grab the `.flatpak` bundle from the
-[latest release](https://github.com/todevelopers/gse-profiler/releases/latest)
-and install it:
+Add the self-hosted **stable** remote once, then install. You get
+automatic updates with `flatpak update` from then on:
 
 ```bash
-flatpak install --user gse-profiler-*.flatpak
+flatpak remote-add --user --if-not-exists todevelopers \
+  https://todevelopers.github.io/flatpaks/todevelopers.flatpakrepo
+flatpak install --user todevelopers io.github.todevelopers.GseProfiler
 flatpak run io.github.todevelopers.GseProfiler
 ```
 
-### Option 2 — One-line source install
+The remote is GPG-signed and the key is embedded in the `.flatpakrepo`
+file, so no `--no-gpg-verify` is needed.
+
+> Want early test builds (rc/beta)? Add the testing remote instead:
+> `https://todevelopers.github.io/flatpaks/todevelopers-testing.flatpakrepo`
+
+### Option 2 — Flatpak bundle
+
+Prefer a one-off install without adding a remote? Grab the `.flatpak`
+bundle from the
+[latest release](https://github.com/todevelopers/gseprofiler/releases/latest)
+and install it (you won't get automatic updates this way):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/todevelopers/gse-profiler/main/scripts/setup-and-run.sh | bash
+flatpak install --user gseprofiler-*.flatpak
+flatpak run io.github.todevelopers.GseProfiler
+```
+
+### Option 3 — One-line source install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/todevelopers/gseprofiler/main/scripts/setup-and-run.sh | bash
 ```
 
 The script checks for GTK4 / libadwaita, clones the repository to
@@ -156,7 +183,7 @@ the app.
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/todevelopers/gse-profiler/main/scripts/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/todevelopers/gseprofiler/main/scripts/uninstall.sh | bash
 ```
 
 Removes the app, desktop entry, icon, and bridge extension. Nothing else
