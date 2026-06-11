@@ -55,23 +55,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/v1.0.0/data/screenshots/flamegraph.png</image>
+      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/main/data/screenshots/flamegraph.png</image>
       <caption>Flame graph profiler with per-function highlighting and call table</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/v1.0.0/data/screenshots/swimlane.png</image>
+      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/main/data/screenshots/swimlane.png</image>
       <caption>Swimlane view showing when and how often each function runs</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/v1.0.0/data/screenshots/histogram.png</image>
+      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/main/data/screenshots/histogram.png</image>
       <caption>Histogram ranking functions by self-time to find where time is spent</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/v1.0.0/data/screenshots/inspector.png</image>
+      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/main/data/screenshots/inspector.png</image>
       <caption>Inspector for browsing extension stateObj properties at runtime</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/v1.0.0/data/screenshots/logs.png</image>
+      <image type="source">https://raw.githubusercontent.com/todevelopers/gseprofiler/main/data/screenshots/logs.png</image>
       <caption>Live log viewer with UUID and log-level filtering</caption>
     </screenshot>
   </screenshots>
