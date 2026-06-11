@@ -77,6 +77,64 @@
   </screenshots>
 
   <releases>
+    <release version="1.1.0" date="2026-06-11">
+      <description>
+        <p>Added:</p>
+        <ul>
+          <li>Install extensions from GitHub — install a GNOME Shell extension</li>
+        </ul>
+        <p>directly from a GitHub repository URL, including repos where the</p>
+        <p>extension lives in a subdirectory. Shows per-stage progress during</p>
+        <p>install and update.</p>
+        <ul>
+          <li>Check for Updates — on-demand update check per extension with</li>
+        </ul>
+        <p>automatic reinstall; the update indicator is now folded into the</p>
+        <p>status dot.</p>
+        <ul>
+          <li>Uninstall action available for all user-installed extensions.</li>
+          <li>Installed commit row links straight to the commit on GitHub.</li>
+          <li>Log Viewer — structured capture controls (defaulting to</li>
+        </ul>
+        <p>gnome-shell), log attribution by GLIB_DOMAIN, a tag-chip filter bar</p>
+        <p>replacing the old Selected filter, and help tooltips on the filters.</p>
+        <p>Changed:</p>
+        <ul>
+          <li>Wayland only — X11 support dropped to shrink the Flatpak</li>
+        </ul>
+        <p>permission surface.</p>
+        <ul>
+          <li>Shell restart after bridge install/remove now goes through D-Bus</li>
+        </ul>
+        <p>instead of a subprocess script.</p>
+        <ul>
+          <li>Profiler stat cards reworked with a demand-weighted layout.</li>
+          <li>Extension provenance is now tracked in a dedicated registry instead of</li>
+        </ul>
+        <p>metadata.json.</p>
+        <ul>
+          <li>Bridge logging unified through GLib.log_structured; noisy lifecycle</li>
+        </ul>
+        <p>logs removed (errors and warnings only).</p>
+        <p>Fixed:</p>
+        <ul>
+          <li>GitHub installs now reconcile the registry against what is on disk</li>
+        </ul>
+        <p>rather than the live D-Bus list.</p>
+        <ul>
+          <li>GSettings schemas are compiled after extracting a GitHub-installed</li>
+        </ul>
+        <p>extension.</p>
+        <ul>
+          <li>Log Viewer: tag bar no longer overflows the window, re-fits chips when</li>
+        </ul>
+        <p>counts grow, captures gnome-shell by executable path, and fixes the</p>
+        <p>tag popover background in dark mode.</p>
+        <ul>
+          <li>Details panel: "Homepage" no longer wraps character-by-character.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-05-21">
       <description>
         <p>First public release.</p>
