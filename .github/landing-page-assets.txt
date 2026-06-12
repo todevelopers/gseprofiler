@@ -1,0 +1,20 @@
+# Assets hot-linked by the external GSE Profiler landing page.
+#
+# The landing page lives in the `todevelopers/flatpaks` repo and is served on
+# GitHub Pages at https://todevelopers.github.io/flatpaks/gseprofiler/ . It loads
+# the screenshots and the app icon DIRECTLY from this repo's `main` branch via
+# raw.githubusercontent.com URLs. Renaming, moving, or deleting any file below
+# silently breaks the published landing page.
+#
+# If you intentionally change one of these paths:
+#   1. update the landing page in todevelopers/flatpaks (gseprofiler/index.html),
+#   2. then update this list to match.
+#
+# One path per line. Blank lines and lines starting with '#' are ignored.
+
+data/screenshots/flamegraph.png
+data/screenshots/swimlane.png
+data/screenshots/histogram.png
+data/screenshots/logs.png
+data/screenshots/inspector.png
+app/data/icons/hicolor/scalable/apps/io.github.todevelopers.GseProfiler.svg

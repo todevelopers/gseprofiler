@@ -89,3 +89,14 @@ jobs:
 
       - name: ESLint
         run: npm run lint
+
+  # ── Landing-page assets: guard the paths the external landing page hot-links ──
+  landing-page-assets:
+    name: Landing-page assets (paths · names)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify hot-linked screenshots and icon
+        run: python3 scripts/check-landing-page-assets.py
