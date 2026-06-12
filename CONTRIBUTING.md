@@ -65,11 +65,13 @@ can be merged.
 | `mypy app/` | Python type correctness |
 | `pytest tests/ -v --tb=short` | Unit tests |
 | `npm run lint` | ESLint on `bridge-extension/` and `api/` |
+| `python3 scripts/check-landing-page-assets.py` | Screenshots and app icon hot-linked by the landing page still exist |
 
 Run them all at once:
 
 ```bash
-ruff check app/ && mypy app/ && pytest tests/ -v --tb=short && npm run lint
+ruff check app/ && mypy app/ && pytest tests/ -v --tb=short && npm run lint \
+  && python3 scripts/check-landing-page-assets.py
 ```
 
 ---
@@ -139,6 +141,30 @@ host shell access required.
 Recomputes the `bundle-hash` in `bridge-extension/metadata.json`. Run it after
 any change to `bridge-extension/*.js`. See [Bridge hash](#bridge-hash) above.
 
+### `scripts/check-landing-page-assets.py`
+
+Guards the screenshots and app icon that the project's **landing page**
+hot-links from this repo's `main` branch. The landing page lives in
+[`todevelopers/flatpaks`](https://github.com/todevelopers/flatpaks) and is
+served at <https://todevelopers.github.io/flatpaks/gseprofiler/>; it loads these
+files directly via `raw.githubusercontent.com` URLs so they update automatically
+as the app evolves. Renaming, moving, or deleting any of them silently breaks
+the live page.
+
+The script reads the protected paths from
+[`.github/landing-page-assets.txt`](.github/landing-page-assets.txt) and fails
+if any is missing, empty, or corrupt (PNG/SVG magic-byte check). It runs in CI
+on every commit (see [`landing-page-assets` job](#landing-page-assets-job)).
+
+```bash
+python3 scripts/check-landing-page-assets.py
+```
+
+**If you intentionally rename or move a hot-linked screenshot or the icon,
+update all three together:** the file itself, the landing page
+(`gseprofiler/index.html` in `todevelopers/flatpaks`), and the manifest
+`.github/landing-page-assets.txt`.
+
 ---
 
 ## GitHub Actions workflows
@@ -147,7 +173,7 @@ any change to `bridge-extension/*.js`. See [Bridge hash](#bridge-hash) above.
 
 **Triggers:** every push to any branch; every pull request targeting `main`.
 
-Contains three parallel jobs:
+Contains four parallel jobs:
 
 #### `python` job
 
@@ -171,6 +197,14 @@ Contains three parallel jobs:
 - Sets up Node.js 20.
 - Installs npm dependencies.
 - Runs `npm run lint` (ESLint on `bridge-extension/` and `api/`).
+
+#### `landing-page-assets` job
+
+- Runs `python3 scripts/check-landing-page-assets.py`.
+- Fails if any screenshot or the app icon hot-linked by the landing page has
+  been renamed, moved, deleted, or corrupted. See
+  [`scripts/check-landing-page-assets.py`](#scriptscheck-landing-page-assetspy)
+  above for the rationale and how to make an intentional change.
 
 ---
 
@@ -359,5 +393,6 @@ Before opening a PR, make sure:
 - [ ] `pytest tests/` passes.
 - [ ] `npm run lint` passes.
 - [ ] If you changed `bridge-extension/*.js`: ran `python3 scripts/update-bridge-hash.py` and committed the updated `metadata.json`.
+- [ ] If you renamed/moved a landing-page screenshot or the app icon: updated the landing page and `.github/landing-page-assets.txt` (see [`check-landing-page-assets.py`](#scriptscheck-landing-page-assetspy)).
 - [ ] New behaviour is covered by tests in `tests/`.
 - [ ] The PR targets the `main` branch.
