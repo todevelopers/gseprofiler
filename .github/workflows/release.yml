@@ -504,7 +504,11 @@ jobs:
           EOF
 
           # ── .flatpakref for one-click install (stable) ────────────────────
-          cat > flatpaks-pub/io.github.todevelopers.GseProfiler.flatpakref <<'EOF'
+          # GPGKey must be present so a fresh user installing directly from the
+          # .flatpakref gets the remote configured with gpg-verify=true. Without
+          # it flatpak creates the remote with gpg-verify=false and our signed
+          # builds are never verified on install/update.
+          cat > flatpaks-pub/io.github.todevelopers.GseProfiler.flatpakref <<EOF
           [Flatpak Ref]
           Name=io.github.todevelopers.GseProfiler
           Branch=stable
@@ -513,10 +517,11 @@ jobs:
           SuggestRemoteName=todevelopers
           RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
           IsRuntime=false
+          GPGKey=${GPG_KEY_B64}
           EOF
 
           # ── .flatpakref for one-click install (testing) ───────────────────
-          cat > flatpaks-pub/io.github.todevelopers.GseProfiler-testing.flatpakref <<'EOF'
+          cat > flatpaks-pub/io.github.todevelopers.GseProfiler-testing.flatpakref <<EOF
           [Flatpak Ref]
           Name=io.github.todevelopers.GseProfiler
           Branch=testing
@@ -525,6 +530,7 @@ jobs:
           SuggestRemoteName=todevelopers-testing
           RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
           IsRuntime=false
+          GPGKey=${GPG_KEY_B64}
           EOF
 
           # ── Landing page — bootstrap only, never overwrite a custom page ──
