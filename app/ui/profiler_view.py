@@ -463,12 +463,12 @@ class ProfilerView(Gtk.Stack):
 
     def _update_stat_cards(self) -> None:
         n_calls = sum(s.count for s in self._stats.values())
-        wall_ms = sum(s.total_ms for s in self._stats.values())
+        wall_ms = sum(s.self_ms for s in self._stats.values())
         self._card_calls.set_value(f"{n_calls:,}".replace(",", " "))
         self._card_calls.set_sub(f"across {len(self._stats)} functions")
 
         self._card_wall.set_value(_fmt_ms(wall_ms))
-        self._card_wall.set_sub("sum of all invocations")
+        self._card_wall.set_sub("sum of self time")
 
         if self._stats:
             hot = max(self._stats.values(), key=lambda s: s.total_ms)
