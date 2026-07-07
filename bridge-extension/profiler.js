@@ -12,6 +12,10 @@ const _STOP_CLASSES = new Set(['Extension', 'Object']);
 // GJS names GObject C types as Namespace_ClassName (e.g. St_Widget, Gio_File).
 // Stop the prototype walk when we reach one of these to avoid patching internals.
 const _FRAMEWORK_RE = /^(St_|Clutter_|Meta_|Shell_|GObject_|Gio_|GLib_|Mutter_|Gdk_|Gtk_|Pango_|Atk_|Soup_|Json_)/;
+// How many levels of nested object-valued properties to follow (stateObj ->
+// _indicator -> _minimal -> ...). Combined with the visited set below, this
+// bounds patching against deep or self-referential object graphs.
+const _MAX_PATCH_DEPTH = 6;
 
 function _isStopProto(proto) {
     const name = proto?.constructor?.name ?? '';
@@ -43,9 +47,12 @@ export class Profiler {
     }
 
     /**
-     * Monkey-patch all functions on the extension's stateObj and its direct
-     * object-valued own properties (e.g. _indicator).
-     * Walks the full prototype chain (excluding framework base classes).
+     * Recursively monkey-patch all functions on the extension's stateObj:
+     * its own prototype chain, then its object-valued own properties, then
+     * *their* object-valued own properties, and so on (e.g. stateObj ->
+     * _indicator -> _minimal). Each object's prototype chain is walked,
+     * stopping at framework base classes. A visited set breaks cycles and
+     * a depth limit bounds pathological object graphs.
      * @param {string} uuid
      * @returns {boolean} whether patching succeeded
      */
@@ -65,39 +72,10 @@ export class Profiler {
         this.#callDepth = 0;
 
         const target = ext.stateObj;
-        const ownKeys = Object.getOwnPropertyNames(target);
-        _dbg(`stateObj constructor=${target?.constructor?.name} ownKeys=[${ownKeys.join(',')}]`);
+        _dbg(`stateObj constructor=${target?.constructor?.name} ownKeys=[${Object.getOwnPropertyNames(target).join(',')}]`);
 
         try {
-            // Walk the stateObj's prototype chain, stopping at framework base classes.
-            let proto = target;
-            while (proto) {
-                if (_isStopProto(proto)) { break; }
-                _dbg(`patching proto level: ${proto.constructor?.name} keys=[${Object.getOwnPropertyNames(proto).join(',')}]`);
-                this.#patchObject(target, proto, '');
-                proto = Object.getPrototypeOf(proto);
-            }
-
-            // Also walk direct object-valued own properties (e.g. _indicator, _fetcher).
-            const visited = new Set([target]);
-            for (const propKey of ownKeys) {
-                let propDesc;
-                try {
-                    propDesc = Object.getOwnPropertyDescriptor(target, propKey);
-                } catch (_e) { continue; }
-                const val = propDesc?.value;
-                if (!val || typeof val !== 'object' || visited.has(val)) { continue; }
-                visited.add(val);
-
-                let sub = val;
-                while (sub) {
-                    if (_isStopProto(sub)) { break; }
-                    _dbg(`patching sub ${propKey} level: ${sub.constructor?.name} keys=[${Object.getOwnPropertyNames(sub).join(',')}]`);
-                    this.#patchObject(val, sub, propKey);
-                    sub = Object.getPrototypeOf(sub);
-                }
-            }
-
+            this.#patchTree(target, '', new Set(), 0);
             this.#running = true;
         } catch (e) {
             bridgeLogError(e, 'startProfiling failed mid-patch, rolling back');
@@ -130,6 +108,40 @@ export class Profiler {
     }
 
     // ── Private ───────────────────────────────────────────────────────────
+
+    /**
+     * Patch `obj`'s own prototype chain (stopping at framework base
+     * classes), then recurse into its object-valued own properties so
+     * nested holders (e.g. stateObj._indicator._minimal) get patched too.
+     * @param {object} obj
+     * @param {string} prefix - dotted path prepended to patched function names
+     * @param {Set<object>} visited - objects already patched, to break cycles
+     * @param {number} depth - current nesting depth, bounded by _MAX_PATCH_DEPTH
+     */
+    #patchTree(obj, prefix, visited, depth) {
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { return; }
+        if (visited.has(obj) || depth > _MAX_PATCH_DEPTH) { return; }
+        visited.add(obj);
+
+        let proto = obj;
+        while (proto) {
+            if (_isStopProto(proto)) { break; }
+            _dbg(`patching ${prefix || '<root>'} level: ${proto.constructor?.name} keys=[${Object.getOwnPropertyNames(proto).join(',')}]`);
+            this.#patchObject(obj, proto, prefix);
+            proto = Object.getPrototypeOf(proto);
+        }
+
+        for (const propKey of Object.getOwnPropertyNames(obj)) {
+            let propDesc;
+            try {
+                propDesc = Object.getOwnPropertyDescriptor(obj, propKey);
+            } catch (_e) { continue; }
+            const val = propDesc?.value;
+            if (!val || typeof val !== 'object') { continue; }
+            const childPrefix = prefix ? `${prefix}.${propKey}` : propKey;
+            this.#patchTree(val, childPrefix, visited, depth + 1);
+        }
+    }
 
     /**
      * Enumerate own function-valued properties of `source` and install
