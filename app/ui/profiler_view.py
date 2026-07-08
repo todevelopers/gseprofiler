@@ -16,6 +16,7 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.exporters import to_speedscope, to_trace_event
 from app.core.socket_server import SocketServer
 from app.ui.profiler import desaturate_color
 from app.ui.profiler.flamegraph import FlamegraphView
@@ -283,12 +284,37 @@ class ProfilerView(Gtk.Stack):
         spacer.set_hexpand(True)
         toolbar.append(spacer)
 
-        self._save_btn = Gtk.Button(icon_name="document-save-symbolic")
+        # Save is round-trip (Load reads it back); exports are one-way,
+        # hence the menu section separator between the two groups.
+        save_section = Gio.Menu()
+        save_section.append("Save Profile (JSON)…", "profiler-export.save")
+        export_section = Gio.Menu()
+        export_section.append("Export for speedscope…", "profiler-export.speedscope")
+        export_section.append(
+            "Export for Firefox Profiler / Perfetto…", "profiler-export.trace"
+        )
+        save_menu = Gio.Menu()
+        save_menu.append_section(None, save_section)
+        save_menu.append_section(None, export_section)
+
+        self._save_btn = Adw.SplitButton(icon_name="document-save-symbolic")
         self._save_btn.add_css_class("flat")
         self._save_btn.set_tooltip_text("Save profile to JSON file (Ctrl+S)")
+        self._save_btn.set_dropdown_tooltip("Save or export profile")
+        self._save_btn.set_menu_model(save_menu)
         self._save_btn.set_sensitive(False)
         self._save_btn.connect("clicked", self._on_save)
         toolbar.append(self._save_btn)
+
+        export_group = Gio.SimpleActionGroup()
+        save_action = Gio.SimpleAction.new("save", None)
+        save_action.connect("activate", lambda *_: self._on_save(None))
+        export_group.add_action(save_action)
+        for action_name in ("speedscope", "trace"):
+            action = Gio.SimpleAction.new(action_name, None)
+            action.connect("activate", self._on_export_action, action_name)
+            export_group.add_action(action)
+        self.insert_action_group("profiler-export", export_group)
 
         self._load_btn = Gtk.Button(icon_name="document-open-symbolic")
         self._load_btn.add_css_class("flat")
@@ -966,17 +992,17 @@ class ProfilerView(Gtk.Stack):
             self._on_save(None)
         return True
 
-    def _on_save(self, _btn: Gtk.Button) -> None:
+    def _default_profile_basename(self) -> str:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         if self._target_uuid:
             short = self._target_uuid.split("@")[0]
-            filename = f"gse-profile_{short}_{ts}.json"
-        else:
-            filename = f"gse-profile_{ts}.json"
+            return f"gse-profile_{short}_{ts}"
+        return f"gse-profile_{ts}"
 
+    def _on_save(self, _btn: Gtk.Widget | None) -> None:
         dialog = Gtk.FileDialog()
         dialog.set_title("Save Profile")
-        dialog.set_initial_name(filename)
+        dialog.set_initial_name(f"{self._default_profile_basename()}.json")
         dialog.save(self.get_root(), None, self._on_save_response)
 
     def _on_save_response(
@@ -1008,6 +1034,44 @@ class ProfilerView(Gtk.Stack):
             )
         except GLib.Error as exc:
             _log.error("Failed to save profile: %s", exc)
+
+    def _on_export_action(
+        self, _action: Gio.SimpleAction, _param: object, fmt: str
+    ) -> None:
+        suffix = ".speedscope.json" if fmt == "speedscope" else ".trace.json"
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Export Profile")
+        dialog.set_initial_name(f"{self._default_profile_basename()}{suffix}")
+        dialog.save(
+            self.get_root(),
+            None,
+            lambda d, result: self._on_export_response(d, result, fmt),
+        )
+
+    def _on_export_response(
+        self, dialog: Gtk.FileDialog, result: Gio.AsyncResult, fmt: str
+    ) -> None:
+        try:
+            gfile = dialog.save_finish(result)
+        except GLib.Error:
+            return
+        events = list(self._raw_events)
+        if fmt == "speedscope":
+            payload = to_speedscope(
+                events, name=self._target_uuid or "gse-profiler profile"
+            )
+        else:
+            payload = to_trace_event(events)
+        try:
+            gfile.replace_contents(
+                json.dumps(payload, indent=2).encode(),
+                None,
+                False,
+                Gio.FileCreateFlags.REPLACE_DESTINATION,
+                None,
+            )
+        except GLib.Error as exc:
+            _log.error("Failed to export profile: %s", exc)
 
     def _on_load(self, _btn: Gtk.Button) -> None:
         filt = Gtk.FileFilter()
