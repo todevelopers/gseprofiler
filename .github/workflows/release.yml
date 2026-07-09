@@ -199,6 +199,14 @@ jobs:
           echo "TARBALL=gseprofiler-${VERSION}.tar.gz" >> "$GITHUB_ENV"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
+      # Thin installable .deb: direct-install channel for GNOME 48+ Debian-family
+      # hosts and the extra-data payload consumed by the flatpark.org manifest.
+      - name: Build deb package
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          bash build-aux/build-deb.sh . "$VERSION" .
+          echo "DEB=gse-profiler_${VERSION}_all.deb" >> "$GITHUB_ENV"
+
       - name: Extract release notes from CHANGELOG.md
         run: |
           VERSION="${{ needs.detect.outputs.version }}"
@@ -223,7 +231,9 @@ jobs:
           tag_name: "v${{ needs.detect.outputs.version }}"
           name: "GSE Profiler ${{ needs.detect.outputs.version }}"
           body_path: CHANGELOG.txt
-          files: ${{ env.TARBALL }}
+          files: |
+            ${{ env.TARBALL }}
+            ${{ env.DEB }}
           draft: false
           prerelease: false
 
