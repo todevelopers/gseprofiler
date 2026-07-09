@@ -74,4 +74,7 @@ Description: Debug, profile and manage GNOME Shell extensions
  bridge extension injected into the gnome-shell process.
 EOF
 
-dpkg-deb --build --root-owner-group "$ROOT" "$OUT/${PKG}_${VERSION}_all.deb"
+# Explicit xz: the flatpark apply_extra script unpacks data.tar.xz with
+# bsdtar, so the compression must not drift with the dpkg default (zstd
+# on current Ubuntu).
+dpkg-deb --build -Zxz --root-owner-group "$ROOT" "$OUT/${PKG}_${VERSION}_all.deb"
