@@ -1,3 +1,14 @@
+## [1.2.0] - 2026-07-09
+
+### Added
+
+- **Export profiles to speedscope and Chrome trace-event formats** — the profiler Save button is now a split button: primary click keeps the JSON save (Ctrl+S unchanged), the dropdown adds "Export for speedscope…" and "Export for Firefox Profiler / Perfetto…".
+
+### Fixed
+
+- Profiler now recursively patches nested target properties instead of only one level deep, so calls on deeper holders are captured during profiling instead of running invisibly.
+- Total wall time stat card now sums self time instead of total time per function, so nested calls are no longer double-counted.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added
