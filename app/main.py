@@ -29,7 +29,7 @@ from app.ui.profiler_view import ProfilerView
 
 APP_ID = "io.github.todevelopers.GseProfiler"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_BASE_VERSION = "1.1.0"
+_BASE_VERSION = "1.2.0"
 
 # Window sizing. Below the minimum the packed toolbars (the 4-tab WIDE view
 # switcher and the log-viewer filter row) hit their own minimums and the layout
