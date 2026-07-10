@@ -8,6 +8,10 @@ finish-args:
   # Standard GTK/Wayland display + IPC plumbing.
   - --share=ipc
   - --socket=wayland
+  # GPU acceleration for GTK4 rendering — without it GTK falls back to
+  # software rendering and the profiler's flame graph, swimlane and
+  # histogram views get noticeably sluggish. (Suggested in flatpark review.)
+  - --device=dri
   # List, enable, disable and inspect GNOME Shell extensions (core feature).
   # The well-known D-Bus name for the Extensions service is org.gnome.Shell
   # itself — the org.gnome.Shell.Extensions interface lives on it.
