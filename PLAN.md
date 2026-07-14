@@ -261,14 +261,6 @@ Phases 6–11 go beyond V1 with constructive additions.
 
 ---
 
-## Phase 10: Extended Packaging (V2+)
-
-- [ ] RPM spec for Fedora/RHEL
-- [ ] Bridge extension cleanup on app uninstall — `BridgeManager.uninstall()` hooked into `%preun` (RPM) and `cleanup` (Flatpak manifest)
-- [ ] Full Flathub submission (review, metadata compliance, sandbox policy)
-
----
-
 ## Phase 11: Inspector V2 — Writable Properties (V2+)
 
 **Goal:** Bring back inline editing of extension state in a way that actually
@@ -455,12 +447,15 @@ the same socket pipeline.
 ### Latent bugs (from 2026-06 code review)
 
 - [ ] `profiler.js` — `_dbg()` calls `bridgeLog`, which is not imported (only
+  
       `bridgeLogError` / `bridgeLogWarning` are); a `ReferenceError` waits for the first
       `DEBUG = true` session
 - [ ] `Profiler.stopProfiling()` — when the original function came from the prototype,
+  
       restore with `delete holder[name]` instead of assigning an own property; the patch
       currently leaves an own-property shadow on the instance after restore
 - [ ] `inspector.js` — getters are invoked eagerly during serialization; GObject getters
+  
       can have side effects, so opening the Inspector can mutate the inspected extension.
       Report getters lazily (`type: "getter"`) and evaluate only on an explicit
       "invoke getter" action
@@ -468,18 +463,22 @@ the same socket pipeline.
 ### Event batching
 
 - [ ] Bridge: buffer profile events and flush as
+  
       `{ type: "profile_batch", events: [...] }` every ~50 ms or after N events — today
       every wrapped call does its own socket write from inside `gnome-shell`, so profiling
       a hot path floods the shell's main loop and skews the measurement
 - [ ] App: handle `profile_batch` in `profiler_view.py` (keep accepting single
+  
       `profile_event` for backward compatibility)
 
 ### Async function profiling
 
 - [ ] Wrapper: detect a `Promise` return value and tag the event `async: true` — today the
+  
       event closes in `finally` when the synchronous part returns, so async methods report
       setup cost, not end-to-end latency
 - [ ] Track settle time: attach `.finally()` to the returned promise and record an
+  
       `asyncEnd` timestamp (extended event schema or a follow-up event)
 - [ ] UI: distinguish async events visually (badge in tooltip / hatched bar)
 - [x] README: documented that only the synchronous portion is measured
@@ -487,6 +486,7 @@ the same socket pipeline.
 ### Protocol versioning
 
 - [ ] App validates `hello.version` on handshake; on mismatch the connection chip shows
+  
       **Bridge outdated** instead of Connected (covers the "user skipped the logout, old
       bridge still running" case the install-time bundle-hash check cannot catch)
 
@@ -497,18 +497,23 @@ the same socket pipeline.
 **Goal:** Pay down structural debt before phases 7 / 11 / 12 grow the codebase further.
 
 - [ ] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`,
+  
       mirroring the `app/ui/profiler/` split — natural seams: capture panel, tag bar +
       chip fitting, list-view factories, main view
 - [ ] Unify settings persistence — `_settings_path` / `_load_settings` / `_save_settings`
+  
       are duplicated in `profiler_view.py` and `log_viewer.py` with diverging merge
       semantics → single `app/core/settings.py` (becomes the seam for the Phase 9
       GSettings backend)
 - [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to
+  
       `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the
       Flatpak manifest and the Phase 10 RPM spec)
 - [ ] `socket_server.py` — extract `_reset_connection()`; the connection-teardown block is
+  
       copy-pasted 3× (error path, EOF path, `stop()`)
 - [ ] Typed message router — replace per-view `message-received` filtering with
+  
       `router.on("profile_event", cb)`-style registration before phases 7 / 11 / 12 add
       more message types
 - [ ] Delete `tests/test_placeholder.py` (Phase 0 leftover)
@@ -519,15 +524,10 @@ the same socket pipeline.
 
 **Goal:** Get more answers out of the event data the profiler already records.
 
-- [ ] Export to **speedscope** JSON (and/or Firefox Profiler format) — just an alternate
-      serializer over existing events; users get a powerful external viewer for free.
-      Cheapest high-value item in the backlog
-- [ ] Aggregated flame graph view — merged stacks answering *"where does time go
-      overall"*, complementing the existing time-axis views
+- [x] Export to **speedscope** JSON (and/or Firefox Profiler format) — just an alternate serializer over existing events; users get a powerful external viewer for free. Cheapest high-value item in the backlog
+- [ ] Aggregated flame graph view — merged stacks answering *"where does time go overall"*, complementing the existing time-axis views
 - [ ] Percentile columns (p95 / p99) in the call table — raw events are already retained
-- [ ] Shell crash detection during profiling — distinguish a clean disconnect from
-      "shell died mid-recording"; offer to save the collected data and re-arm
-      automatically after reconnect
+- [ ] Shell crash detection during profiling — distinguish a clean disconnect from "shell died mid-recording"; offer to save the collected data and re-arm automatically after reconnect
 
 ---
 
@@ -535,10 +535,8 @@ the same socket pipeline.
 
 **Goal:** Support the place where GNOME extensions actually live, not just GitHub.
 
-- [ ] Download via the EGO REST API (zip), reuse the provenance registry from the GitHub
-      installer
-- [ ] Unified "Add extension" flow — one dialog accepting a GitHub URL or an EGO URL /
-      search query
+- [x] Download via the EGO REST API (zip), reuse the provenance registry from the GitHu installer
+- [x] Unified "Add extension" flow — one dialog accepting a GitHub URL or an EGO URL / search query
 
 ---
 
@@ -579,26 +577,26 @@ the same socket pipeline.
 
 ## Milestone Summary
 
-| Phase | Milestone            | Scope                                 | Status       |
-| ----- | -------------------- | ------------------------------------- | ------------ |
-| 0     | Skeleton + CI        | Project setup                         | ✅ done       |
-| 1     | Extension Manager    | List, enable/disable                  | ✅ done       |
-| 2     | Bridge + Socket      | App ↔ Shell IPC                       | ✅ done       |
-| 3     | Log Viewer           | Live filtered logs                    | ✅ done       |
-| 4     | Profiler V1          | Timing table + flame graph            | ✅ done       |
-| 5     | Inspector            | stateObj live view (R/O)              | ✅ done       |
-| —     | Pre-release          | Polish, GitHub, Flatpak               | ✅ done       |
-| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                   | ✅ done       |
-| 6     | GitHub install       | Install extensions from GitHub        | ✅ done       |
-| 7     | Memory profiling     | Heap analysis (V2)                    | planned      |
-| 8     | Health checks        | Linting + validation (V2+)            | planned      |
-| 9     | Settings             | Preferences window (V2+)              | planned      |
-| 10    | Extended packaging   | RPM + Flathub full (V2+)              | planned      |
-| 11    | Inspector writable   | Full property editing (V2+)           | planned      |
-| 12    | Startup profiling    | Profile enable() ramp-up (V2+)        | planned      |
-| 13    | Global shortcuts     | Toggle profiling via keybinding (V2+) | planned      |
-| 14    | Bridge hardening     | Bug fixes, batching, async profiling  | planned      |
-| 15    | Refactoring pass     | log_viewer split, settings, packaging | planned      |
-| 16    | Export & analysis    | speedscope, merged flame graph        | planned      |
-| 17    | EGO install          | Install from extensions.gnome.org     | planned      |
-| —     | opt-in Developer API | Extension author integration          | deferred ∞   |
+| Phase | Milestone            | Scope                                 | Status     |
+| ----- | -------------------- | ------------------------------------- | ---------- |
+| 0     | Skeleton + CI        | Project setup                         | ✅ done     |
+| 1     | Extension Manager    | List, enable/disable                  | ✅ done     |
+| 2     | Bridge + Socket      | App ↔ Shell IPC                       | ✅ done     |
+| 3     | Log Viewer           | Live filtered logs                    | ✅ done     |
+| 4     | Profiler V1          | Timing table + flame graph            | ✅ done     |
+| 5     | Inspector            | stateObj live view (R/O)              | ✅ done     |
+| —     | Pre-release          | Polish, GitHub, Flatpak               | ✅ done     |
+| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                   | ✅ done     |
+| 6     | GitHub install       | Install extensions from GitHub        | ✅ done     |
+| 7     | Memory profiling     | Heap analysis (V2)                    | planned    |
+| 8     | Health checks        | Linting + validation (V2+)            | planned    |
+| 9     | Settings             | Preferences window (V2+)              | planned    |
+| 10    | Extended packaging   | RPM + Flathub full (V2+)              | planned    |
+| 11    | Inspector writable   | Full property editing (V2+)           | planned    |
+| 12    | Startup profiling    | Profile enable() ramp-up (V2+)        | planned    |
+| 13    | Global shortcuts     | Toggle profiling via keybinding (V2+) | planned    |
+| 14    | Bridge hardening     | Bug fixes, batching, async profiling  | planned    |
+| 15    | Refactoring pass     | log_viewer split, settings, packaging | planned    |
+| 16    | Export & analysis    | speedscope, merged flame graph        | planned    |
+| 17    | EGO install          | Install from extensions.gnome.org     | planned    |
+| —     | opt-in Developer API | Extension author integration          | deferred ∞ |
