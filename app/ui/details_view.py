@@ -33,8 +33,8 @@ from app.core.source_registry import SourceRegistry
 
 _log = logging.getLogger(__name__)
 
-_CHECK_SUBTITLE = "Pull the latest commit and reinstall"
-_EGO_CHECK_SUBTITLE = "Check extensions.gnome.org and reinstall"
+_CHECK_SUBTITLE = "Check GitHub for a newer commit"
+_EGO_CHECK_SUBTITLE = "Check extensions.gnome.org for a newer version"
 
 
 class DetailsView(Gtk.Stack):
@@ -524,54 +524,29 @@ class DetailsView(Gtk.Stack):
         self._github_check_btn.set_sensitive(False)
         self._github_check_row.set_subtitle("Checking for updates…")
         src = self._active_source
-        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
         self._installer.check_update(
             self._active_uuid,
             src,
-            on_done=lambda new_sha, err: self._on_check_done(parent, src, new_sha, err),
+            on_done=self._on_check_done,
         )
 
     def _on_check_done(
         self,
-        parent: Gtk.Window | None,
-        src: GitHubSource,
         new_sha: str | None,
         error: str | None,
     ) -> None:
+        # Check only — reveal the Update row and let the user decide.  The
+        # actual download happens when they click Update.
+        self._github_check_btn.set_sensitive(True)
         if error:
-            self._github_check_btn.set_sensitive(True)
             self._github_check_row.set_subtitle(error)
             return
         if not new_sha:
-            self._github_check_btn.set_sensitive(True)
             self._github_check_row.set_subtitle("Up to date.")
+            self._set_update_row(None)
             return
-        # New commit upstream — pull and reinstall.
-        self._github_check_row.set_subtitle(
-            f"New commit {new_sha[:7]} found — downloading…"
-        )
-        if self._installer is None:
-            self._github_check_btn.set_sensitive(True)
-            return
-        self._installer.update(
-            src,
-            on_done=lambda uuid, err: self._on_check_update_installed(parent, uuid, err),
-            on_progress=self._github_check_row.set_subtitle,
-        )
-
-    def _on_check_update_installed(
-        self,
-        parent: Gtk.Window | None,
-        uuid: str | None,
-        error: str | None,
-    ) -> None:
-        self._github_check_btn.set_sensitive(True)
-        if error or not uuid:
-            self._github_check_row.set_subtitle(error or "Update failed.")
-            return
-        self._github_check_row.set_subtitle("Up to date.")
-        self._github_update_row.set_visible(False)
-        prompt_shell_restart(parent, action="updated")
+        self._github_check_row.set_subtitle(f"Update available: {new_sha[:7]}.")
+        self._set_update_row(new_sha)
 
     # ── EGO source handlers ──────────────────────────────────────────────
 
@@ -632,58 +607,29 @@ class DetailsView(Gtk.Stack):
             return
         self._ego_check_btn.set_sensitive(False)
         self._ego_check_row.set_subtitle("Checking for updates…")
-        src = self._active_ego_source
-        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
         self._ego.check_update(
             self._active_uuid,
-            src,
+            self._active_ego_source,
             self._dbus.shell_version,
-            on_done=lambda new_version, err: self._on_ego_check_done(
-                parent, src, new_version, err
-            ),
+            on_done=self._on_ego_check_done,
         )
 
     def _on_ego_check_done(
         self,
-        parent: Gtk.Window | None,
-        src: EgoSource,
         new_version: str | None,
         error: str | None,
     ) -> None:
+        # Check only — reveal the Update row and let the user decide.
+        self._ego_check_btn.set_sensitive(True)
         if error:
-            self._ego_check_btn.set_sensitive(True)
             self._ego_check_row.set_subtitle(error)
             return
         if not new_version:
-            self._ego_check_btn.set_sensitive(True)
             self._ego_check_row.set_subtitle("Up to date.")
+            self._set_ego_update_row(None)
             return
-        if self._ego is None:
-            self._ego_check_btn.set_sensitive(True)
-            return
-        self._ego_check_row.set_subtitle(
-            f"Version v{new_version} found — downloading…"
-        )
-        self._ego.update(
-            src,
-            self._dbus.shell_version,
-            on_done=lambda uuid, err: self._on_ego_check_installed(parent, uuid, err),
-            on_progress=self._ego_check_row.set_subtitle,
-        )
-
-    def _on_ego_check_installed(
-        self,
-        parent: Gtk.Window | None,
-        uuid: str | None,
-        error: str | None,
-    ) -> None:
-        self._ego_check_btn.set_sensitive(True)
-        if error or not uuid:
-            self._ego_check_row.set_subtitle(error or "Update failed.")
-            return
-        self._ego_check_row.set_subtitle("Up to date.")
-        self._ego_update_row.set_visible(False)
-        prompt_shell_restart(parent, action="updated")
+        self._ego_check_row.set_subtitle(f"Update available: v{new_version}.")
+        self._set_ego_update_row(new_version)
 
     def _on_uninstall_clicked(self, _btn: Gtk.Button) -> None:
         if self._active_uuid is None:

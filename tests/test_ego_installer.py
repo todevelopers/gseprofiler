@@ -80,3 +80,32 @@ def test_extract_install_rejects_bad_zip(tmp_path: Path) -> None:
 
     with pytest.raises(InstallError, match="archive"):
         _do_extract_install_zip(b"not a zip", extensions_root=tmp_path)
+
+
+def test_install_rejects_incompatible_shell(tmp_path: Path) -> None:
+    """An extension without the running shell in its map is refused pre-download."""
+    from app.core.ego_client import EgoClient
+    from app.core.ego_installer import EgoInstaller
+    from app.core.source_registry import SourceRegistry
+
+    inst = EgoInstaller(
+        SourceRegistry(tmp_path / "sources.json"), EgoClient()
+    )
+    captured: dict[str, object] = {}
+    info = {
+        "uuid": "x@x",
+        "pk": 1,
+        "version": 2,
+        "version_tag": 3,
+        "download_url": "/download-extension/x.zip?version_tag=3",
+        "shell_version_map": {"47": {"pk": 3, "version": 2}},
+    }
+    inst._on_info_for_install(
+        info,
+        None,
+        "48",
+        lambda uuid, err: captured.update(uuid=uuid, err=err),
+        None,
+    )
+    assert captured["uuid"] is None
+    assert "not compatible" in str(captured["err"]).lower()

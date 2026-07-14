@@ -114,14 +114,13 @@ class InstallDialog(Adw.Dialog):
         header.set_show_end_title_buttons(False)
         header.set_show_start_title_buttons(False)
 
-        self._cancel_btn = Gtk.Button(label="Cancel")
-        self._cancel_btn.connect("clicked", lambda _b: self.close())
-        header.pack_start(self._cancel_btn)
-
-        self._install_btn = Gtk.Button(label="Install")
-        self._install_btn.add_css_class("suggested-action")
-        self._install_btn.connect("clicked", self._on_install_clicked)
-        header.pack_end(self._install_btn)
+        # A compact close button (instead of a "Cancel" label) leaves the full
+        # header width to the view switcher so "extensions.gnome.org" fits.
+        self._close_btn = Gtk.Button(icon_name="window-close-symbolic")
+        self._close_btn.add_css_class("flat")
+        self._close_btn.set_tooltip_text("Close")
+        self._close_btn.connect("clicked", lambda _b: self.close())
+        header.pack_start(self._close_btn)
 
         self._stack = Adw.ViewStack()
         github_page = self._stack.add_titled(
@@ -163,6 +162,22 @@ class InstallDialog(Adw.Dialog):
         content.append(self._status_box)
 
         toolbar.set_content(content)
+
+        # ── Bottom action bar (Install in the corner) ──────────────────────
+        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        bottom.set_margin_start(12)
+        bottom.set_margin_end(12)
+        bottom.set_margin_top(6)
+        bottom.set_margin_bottom(12)
+
+        self._install_btn = Gtk.Button(label="Install")
+        self._install_btn.add_css_class("suggested-action")
+        self._install_btn.set_hexpand(True)
+        self._install_btn.set_halign(Gtk.Align.END)
+        self._install_btn.connect("clicked", self._on_install_clicked)
+        bottom.append(self._install_btn)
+        toolbar.add_bottom_bar(bottom)
+
         self.set_child(toolbar)
 
         self._update_install_sensitivity()
@@ -259,7 +274,7 @@ class InstallDialog(Adw.Dialog):
 
     def _set_busy(self, busy: bool, label: str = "") -> None:
         self._busy = busy
-        self._cancel_btn.set_sensitive(True)
+        self._close_btn.set_sensitive(True)
         self._repo_row.set_sensitive(not busy)
         self._search.set_sensitive(not busy)
         self._results.set_sensitive(not busy)
@@ -319,6 +334,11 @@ class InstallDialog(Adw.Dialog):
         row = self._results.get_selected_row()
         if not isinstance(row, _EgoResultRow):
             self._show_error("Select an extension to install.")
+            return
+        if not row.compatible:
+            self._show_error(
+                "This extension is not compatible with your GNOME Shell version."
+            )
             return
         self._set_busy(True, "Looking up extension…")
         self._ego.install(

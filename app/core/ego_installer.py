@@ -122,7 +122,9 @@ class EgoInstaller(GObject.Object):
         self._client.fetch_info(
             uuid,
             shell_version,
-            lambda info, err: self._on_info_for_install(info, err, on_done, on_progress),
+            lambda info, err: self._on_info_for_install(
+                info, err, shell_version, on_done, on_progress
+            ),
         )
 
     def update(
@@ -164,11 +166,22 @@ class EgoInstaller(GObject.Object):
         self,
         info: dict[str, Any] | None,
         error: str | None,
+        shell_version: str | None,
         on_done: _InstallCallback | None,
         on_progress: _ProgressCallback | None,
     ) -> None:
         if error is not None or info is None:
             self._fail(on_done, error or "Could not look up the extension.")
+            return
+        # Refuse extensions the running shell can't load.  EGO's info reply may
+        # still carry a download_url for the latest (incompatible) upload, so
+        # gate on the shell_version_map rather than trusting download_url alone.
+        svm = info.get("shell_version_map") or {}
+        if shell_version and shell_version not in svm:
+            self._fail(
+                on_done,
+                f"This extension is not compatible with GNOME Shell {shell_version}.",
+            )
             return
         download_url = info.get("download_url") or ""
         if not download_url:
