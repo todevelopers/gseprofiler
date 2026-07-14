@@ -15,10 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import shutil
-import subprocess
 import tarfile
 import tempfile
 import threading
@@ -35,6 +33,24 @@ gi.require_version("GObject", "2.0")
 gi.require_version("Soup", "3.0")
 from gi.repository import Gio, GLib, GObject, Soup
 
+# Shared low-level install plumbing.  ``EXTENSIONS_ROOT`` and ``InstallError``
+# are re-exported here for backwards-compatible imports
+# (``from app.core.github_installer import EXTENSIONS_ROOT, InstallError``).
+from app.core.extension_install import (
+    EXTENSIONS_ROOT,
+    InstallError,
+    install_into_place,
+)
+from app.core.extension_install import (
+    emit_progress as _emit_progress,
+)
+from app.core.extension_install import (
+    http_error as _http_error,
+)
+from app.core.extension_install import (
+    safe_extract_tar as _safe_extract,
+)
+
 # Re-exported for backwards-compatible imports (``from app.core.github_installer
 # import GitHubSource``).  The dataclass lives in its own module to avoid a
 # circular import with the source registry.
@@ -47,18 +63,6 @@ except ImportError:  # pragma: no cover - optional at import time
     pathspec = None  # type: ignore[assignment]
 
 _log = logging.getLogger(__name__)
-
-_IN_FLATPAK: bool = os.path.exists("/.flatpak-info")
-
-# Inside a Flatpak sandbox ``GLib.get_user_data_dir()`` returns the app-scoped
-# directory (~/.var/app/<id>/data), not the host ~/.local/share that
-# gnome-shell actually watches.  Use the real home-relative path when
-# sandboxed.  Identical to the rationale in ``bridge_manager``.
-EXTENSIONS_ROOT: Path = (
-    Path.home() / ".local" / "share" / "gnome-shell" / "extensions"
-    if _IN_FLATPAK
-    else Path(GLib.get_user_data_dir()) / "gnome-shell" / "extensions"
-)
 
 _GITHUB_API = "https://api.github.com"
 _USER_AGENT = "gse-profiler"
@@ -106,10 +110,6 @@ class ParsedRepo(NamedTuple):
     subpath: str | None
 
 
-class InstallError(Exception):
-    """Raised when an install/update fails with a user-presentable message."""
-
-
 # ─── Public helpers ────────────────────────────────────────────────────────
 
 
@@ -140,25 +140,6 @@ def parse_repo_url(url: str) -> ParsedRepo | None:
 
 
 # ─── Tarball extraction + filtering (runs on a worker thread) ─────────────
-
-
-def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
-    """Extract ``tar`` into ``dest`` with path-traversal protection."""
-    # ``filter='data'`` is the supported safe extraction mode in 3.12+.
-    # On older 3.11.x without the filter API, fall back to manual checks.
-    if hasattr(tarfile, "data_filter"):
-        tar.extractall(dest, filter="data")  # type: ignore[call-arg]
-        return
-    dest_resolved = dest.resolve()
-    for member in tar.getmembers():
-        member_path = (dest / member.name).resolve()
-        try:
-            member_path.relative_to(dest_resolved)
-        except ValueError as exc:
-            raise InstallError(
-                f"Tarball contains unsafe path: {member.name}"
-            ) from exc
-    tar.extractall(dest)
 
 
 def _read_export_ignore_patterns(gitattributes: Path) -> list[str]:
@@ -373,7 +354,7 @@ class GitHubInstaller(GObject.Object):
     def check_updates(self, extensions: dict[str, dict[str, Any]]) -> None:
         """Query upstream HEAD for every installed GitHub-sourced extension."""
         for uuid, src in self._registry.all().items():
-            if uuid in extensions:
+            if isinstance(src, GitHubSource) and uuid in extensions:
                 self._check_one(uuid, src)
 
     def check_update(
@@ -736,23 +717,13 @@ def _do_extract_install(
         if not meta_path.is_file():
             raise InstallError("Filter removed required file: metadata.json")
 
-        target = root_dir / uuid
-
-        # Compile GSettings schemas if the extension ships any.  Repos almost
-        # never commit the compiled binary (it lives in their .gitignore);
-        # without it GNOME Shell crashes the extension as soon as it tries
-        # to open a GSettings instance.  Done on the staging copy so a
-        # failure leaves the existing install untouched.
-        _compile_schemas(src_root)
-
-        # Move into place (replace existing).
-        if on_progress:
-            GLib.idle_add(on_progress, "Installing extension…")
-        if target.exists():
-            shutil.rmtree(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src_root), str(target))
-        _log.info("Installed %s to %s", uuid, target)
+        # Compile GSettings schemas and move into place (replacing any
+        # existing install).  Repos almost never commit the compiled binary
+        # (it lives in their .gitignore); without it GNOME Shell crashes the
+        # extension as soon as it tries to open a GSettings instance.  Both
+        # steps run on the staging copy so a failure leaves the current
+        # install untouched.
+        install_into_place(src_root, root_dir, uuid, on_progress=on_progress)
         return uuid, resolved_subpath
 
 
@@ -812,91 +783,3 @@ def _locate_extension(
             )
     ext_dir = matches[0].parent
     return ext_dir, ext_dir.relative_to(repo_root).as_posix()
-
-
-def _compile_schemas(extension_root: Path) -> None:
-    """Run ``glib-compile-schemas`` on the extension's ``schemas/`` directory.
-
-    No-op when the extension has no schemas.  Raises :class:`InstallError`
-    when ``schemas/*.gschema.xml`` exists but compilation fails — the
-    extension will not work without ``gschemas.compiled``.
-    """
-    schemas_dir = extension_root / "schemas"
-    if not schemas_dir.is_dir():
-        return
-    if not any(schemas_dir.glob("*.gschema.xml")) and not any(
-        schemas_dir.glob("*.gschema.override")
-    ):
-        # Directory exists but no schemas to compile (e.g. only README).
-        return
-    try:
-        result = subprocess.run(
-            ["glib-compile-schemas", str(schemas_dir)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise InstallError(
-            "glib-compile-schemas is not available — cannot compile "
-            "GSettings schemas for this extension."
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise InstallError(
-            "Compiling GSettings schemas timed out."
-        ) from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise InstallError(
-            "Failed to compile GSettings schemas: "
-            + (detail or f"exit code {result.returncode}")
-        )
-    # glib-compile-schemas exits 0 even when individual files are malformed;
-    # it just prints "Error on line ..." to stderr and skips them.  Surface
-    # those so the developer notices.
-    stderr = (result.stderr or "").strip()
-    if stderr and ("error" in stderr.lower() or "warning" in stderr.lower()):
-        raise InstallError("Failed to compile GSettings schemas: " + stderr)
-    _log.info("Compiled GSettings schemas in %s", schemas_dir)
-
-
-# ─── Progress helper ──────────────────────────────────────────────────────
-
-
-def _emit_progress(callback: _ProgressCallback | None, message: str) -> None:
-    if callback:
-        callback(message)
-
-
-# ─── HTTP error helpers ───────────────────────────────────────────────────
-
-
-def _http_error(msg: Soup.Message, body: bytes, action: str) -> str:
-    status = int(msg.get_status())
-    reason = msg.get_reason_phrase() or ""
-    # GitHub puts a human-readable error in the JSON ``message`` field.
-    detail = ""
-    if body:
-        try:
-            detail = str(json.loads(body).get("message", "")).strip()
-        except (json.JSONDecodeError, AttributeError):
-            detail = ""
-    # Rate-limit gets a specific hint.
-    if status == 403:
-        remaining = msg.get_response_headers().get_one("X-RateLimit-Remaining")
-        if remaining == "0":
-            reset = msg.get_response_headers().get_one("X-RateLimit-Reset") or ""
-            reset_hint = ""
-            if reset.isdigit():
-                try:
-                    when = datetime.fromtimestamp(int(reset), tz=timezone.utc)
-                    reset_hint = f" Try again after {when.strftime('%H:%M UTC')}."
-                except (OverflowError, OSError, ValueError):
-                    reset_hint = ""
-            return (
-                f"GitHub rate limit exceeded while trying to {action}.{reset_hint}"
-            )
-    if detail:
-        return f"Failed to {action}: {detail} (HTTP {status} {reason}).".strip()
-    return f"Failed to {action}: HTTP {status} {reason}.".strip()
