@@ -124,6 +124,24 @@ class DBusClient(GObject.Object):
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    @property
+    def shell_version(self) -> str | None:
+        """Running GNOME Shell major version (e.g. ``"48"``), or None.
+
+        Read from the ``ShellVersion`` D-Bus property, which the proxy caches
+        on creation (``DBusProxyFlags.NONE``).  Returns None before the proxy
+        is ready or when the property is unavailable (e.g. headless).  The
+        EGO client uses this to request shell-compatible extension versions.
+        """
+        if self._proxy is None:
+            return None
+        variant = self._proxy.get_cached_property("ShellVersion")
+        if variant is None:
+            return None
+        full = str(variant.get_string() or "")
+        major = full.split(".", 1)[0].strip()
+        return major or None
+
     def list_extensions(self) -> None:
         """Async-refresh the list; emits extensions-changed when done."""
         if self._proxy is None:

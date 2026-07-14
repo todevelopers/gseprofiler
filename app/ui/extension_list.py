@@ -13,6 +13,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from app.core.bridge_manager import BRIDGE_UUID
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.ego_source import EgoSource
 from app.core.github_installer import EXTENSIONS_ROOT, GitHubInstaller, GitHubSource
 
 _log = logging.getLogger(__name__)
@@ -80,15 +81,13 @@ class _ExtRow(Gtk.ListBoxRow):
 
         box.append(text_box)
 
-        # GitHub source badge — hidden by default, shown for github-sourced ext.
-        self._github_icon = Gtk.Image.new_from_icon_name(
-            "folder-download-symbolic"
-        )
-        self._github_icon.set_valign(Gtk.Align.CENTER)
-        self._github_icon.set_tooltip_text("Installed from GitHub")
-        self._github_icon.add_css_class("dim-label")
-        self._github_icon.set_visible(False)
-        box.append(self._github_icon)
+        # Source badge — hidden by default, shown for extensions we installed
+        # (from GitHub or from extensions.gnome.org).
+        self._source_icon = Gtk.Image.new_from_icon_name("folder-download-symbolic")
+        self._source_icon.set_valign(Gtk.Align.CENTER)
+        self._source_icon.add_css_class("dim-label")
+        self._source_icon.set_visible(False)
+        box.append(self._source_icon)
 
         self.set_child(box)
         self.update(info)
@@ -101,7 +100,7 @@ class _ExtRow(Gtk.ListBoxRow):
         self,
         info: dict[str, Any],
         *,
-        github_source: GitHubSource | None = None,
+        source: GitHubSource | EgoSource | None = None,
         has_update: bool = False,
     ) -> None:
         name = info.get("name") or self.uuid
@@ -110,17 +109,24 @@ class _ExtRow(Gtk.ListBoxRow):
         self._name_label.set_label(name)
         self._uuid_label.set_label(self.uuid)
         self._refresh_dot()
-        self.set_github_source(github_source)
+        self.set_source(source)
 
-    def set_github_source(self, source: GitHubSource | None) -> None:
+    def set_source(self, source: GitHubSource | EgoSource | None) -> None:
         if source is None:
-            self._github_icon.set_visible(False)
+            self._source_icon.set_visible(False)
             return
-        self._github_icon.set_visible(True)
-        self._github_icon.set_tooltip_text(
-            f"Installed from github.com/{source.owner}/{source.repo}"
-            + (f" @ {source.short_sha}" if source.short_sha else "")
-        )
+        self._source_icon.set_visible(True)
+        if isinstance(source, EgoSource):
+            self._source_icon.set_from_icon_name("source-gnome-symbolic")
+            self._source_icon.set_tooltip_text(
+                f"Installed from extensions.gnome.org @ {source.version_label}"
+            )
+        else:
+            self._source_icon.set_from_icon_name("source-github-symbolic")
+            self._source_icon.set_tooltip_text(
+                f"Installed from github.com/{source.owner}/{source.repo}"
+                + (f" @ {source.short_sha}" if source.short_sha else "")
+            )
 
     def set_update_available(self, has_update: bool) -> None:
         self._has_update = has_update
@@ -173,8 +179,8 @@ class ExtensionListView(Gtk.Box):
         self._in_restore = False
         self._favorites: set[str] = _load_favorites()
         self._last_extensions: dict[str, Any] = {}
-        self._github_sources: dict[str, GitHubSource] = {}
-        self._github_updates: dict[str, str] = {}
+        self._sources: dict[str, GitHubSource | EgoSource] = {}
+        self._updates: dict[str, str] = {}
 
         self._build_ui()
         dbus_client.connect("extensions-changed", self._on_extensions_changed)
@@ -281,9 +287,14 @@ class ExtensionListView(Gtk.Box):
     def is_favorite(self, uuid: str) -> bool:
         return uuid in self._favorites
 
-    def mark_github_update_available(self, uuid: str, new_sha: str) -> None:
-        """Mark a GitHub-sourced extension as having an upstream update."""
-        self._github_updates[uuid] = new_sha
+    def mark_update_available(self, uuid: str, value: str) -> None:
+        """Mark an extension we installed as having an available update.
+
+        Works for both GitHub (``value`` is the new commit SHA) and EGO
+        (``value`` is the new version); the sidebar only needs the presence
+        of an update, not its kind.
+        """
+        self._updates[uuid] = value
         row = self._rows.get(uuid)
         if row is not None:
             row.set_update_available(True)
@@ -336,16 +347,16 @@ class ExtensionListView(Gtk.Box):
         # disk but unknown to gnome-shell until the next session), then
         # annotate the rows that actually exist in the current list.
         self._installer.registry.reconcile(EXTENSIONS_ROOT)
-        self._github_sources = {
+        self._sources = {
             uuid: src
             for uuid, src in self._installer.registry.all().items()
             if uuid in extensions
         }
         # Drop stale update flags for extensions that no longer exist.
-        self._github_updates = {
-            uuid: sha
-            for uuid, sha in self._github_updates.items()
-            if uuid in self._github_sources
+        self._updates = {
+            uuid: value
+            for uuid, value in self._updates.items()
+            if uuid in self._sources
         }
 
         fav_items:      list[tuple[str, dict]] = []
@@ -380,8 +391,8 @@ class ExtensionListView(Gtk.Box):
         ):
             for uuid, info in items:
                 row = _ExtRow(uuid, info)
-                row.set_github_source(self._github_sources.get(uuid))
-                row.set_update_available(uuid in self._github_updates)
+                row.set_source(self._sources.get(uuid))
+                row.set_update_available(uuid in self._updates)
                 lb.append(row)
                 self._rows[uuid] = row
 

@@ -18,12 +18,15 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from app.core.bridge_manager import BRIDGE_UUID, BridgeManager
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.ego_client import EgoClient
+from app.core.ego_installer import EgoInstaller
 from app.core.github_installer import GitHubInstaller
 from app.core.socket_server import SocketServer
+from app.core.source_registry import SourceRegistry
 from app.ui.details_view import DetailsView
 from app.ui.extension_list import ExtensionListView
-from app.ui.github_install_dialog import GitHubInstallDialog
 from app.ui.inspector_view import InspectorView
+from app.ui.install_dialog import InstallDialog
 from app.ui.log_viewer import LogViewerView
 from app.ui.profiler_view import ProfilerView
 
@@ -92,6 +95,7 @@ class MainWindow(Adw.ApplicationWindow):
         socket_server: SocketServer,
         bridge: BridgeManager,
         installer: GitHubInstaller,
+        ego_installer: EgoInstaller,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
@@ -99,6 +103,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._socket = socket_server
         self._bridge = bridge
         self._installer = installer
+        self._ego_installer = ego_installer
         self._active_uuid: str | None = None
         self._last_extensions: dict[str, Any] = {}
         self.set_title("GSE Profiler")
@@ -112,8 +117,10 @@ class MainWindow(Adw.ApplicationWindow):
         socket_server.connect("client-connected", self._on_client_connected)
         socket_server.connect("client-disconnected", self._on_client_disconnected)
         dbus_client.connect("extensions-changed", self._on_extensions_changed)
-        installer.connect("installed", self._on_github_installed)
+        installer.connect("installed", self._on_extension_installed)
         installer.connect("update-available", self._on_github_update_available)
+        ego_installer.connect("installed", self._on_extension_installed)
+        ego_installer.connect("update-available", self._on_ego_update_available)
 
     def _register_actions(self) -> None:
         self._install_action = Gio.SimpleAction.new("install-bridge", None)
@@ -128,9 +135,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._uninstall_action.connect("activate", self._on_uninstall_bridge)
         self.add_action(self._uninstall_action)
 
-        github_install_action = Gio.SimpleAction.new("install-from-github", None)
-        github_install_action.connect("activate", self._on_install_from_github)
-        self.add_action(github_install_action)
+        install_action = Gio.SimpleAction.new("install-extension", None)
+        install_action.connect("activate", self._on_install_extension)
+        self.add_action(install_action)
 
         toggle_action = Gio.SimpleAction.new("toggle-sidebar", None)
         toggle_action.connect("activate", self._on_toggle_sidebar)
@@ -152,7 +159,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar_toggle_btn.connect("toggled", self._on_sidebar_btn_toggled)
 
         # ── Content views ──────────────────────────────────────────────────
-        self._details_view = DetailsView(self._dbus, self._installer)
+        self._details_view = DetailsView(
+            self._dbus, self._installer, self._ego_installer
+        )
         self._profiler_view = ProfilerView(self._dbus, self._socket)
         self._inspector_view = InspectorView(self._dbus, self._socket)
         self._logs_view = LogViewerView(self._dbus)
@@ -195,7 +204,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         menu = Gio.Menu()
         install_section = Gio.Menu()
-        install_section.append("Install from GitHub…", "win.install-from-github")
+        install_section.append("Install Extension…", "win.install-extension")
         menu.append_section("Extensions", install_section)
         section = Gio.Menu()
         section.append("Install Bridge", "win.install-bridge")
@@ -218,8 +227,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         github_add_btn = Gtk.Button()
         github_add_btn.set_icon_name("list-add-symbolic")
-        github_add_btn.set_tooltip_text("Install extension from GitHub…")
-        github_add_btn.set_action_name("win.install-from-github")
+        github_add_btn.set_tooltip_text("Install an extension…")
+        github_add_btn.set_action_name("win.install-extension")
 
         self._conn_chip = _ConnectionChip()
         self._conn_chip.add_css_class("caption")
@@ -364,16 +373,18 @@ class MainWindow(Adw.ApplicationWindow):
         self._bridge.uninstall(parent_window=self)
         GLib.idle_add(self._update_bridge_actions)
 
-    # ── GitHub install ─────────────────────────────────────────────────────
+    # ── Extension install ──────────────────────────────────────────────────
 
-    def _on_install_from_github(
+    def _on_install_extension(
         self, _action: Gio.SimpleAction, _param: object
     ) -> None:
-        dialog = GitHubInstallDialog(self._installer)
+        dialog = InstallDialog(
+            self._installer, self._ego_installer, self._dbus.shell_version
+        )
         dialog.present(self)
 
-    def _on_github_installed(
-        self, _installer: GitHubInstaller, _uuid: str
+    def _on_extension_installed(
+        self, _installer: object, _uuid: str
     ) -> None:
         # Force-refresh the extension list so the new extension appears once
         # gnome-shell reloads (also useful while developing without logout).
@@ -382,8 +393,14 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_github_update_available(
         self, _installer: GitHubInstaller, uuid: str, new_sha: str
     ) -> None:
-        self._ext_list.mark_github_update_available(uuid, new_sha)
+        self._ext_list.mark_update_available(uuid, new_sha)
         self._details_view.refresh_github_update(uuid, new_sha)
+
+    def _on_ego_update_available(
+        self, _installer: EgoInstaller, uuid: str, new_version: str
+    ) -> None:
+        self._ext_list.mark_update_available(uuid, new_version)
+        self._details_view.refresh_ego_update(uuid, new_version)
 
 
 class Application(Adw.Application):
@@ -393,7 +410,10 @@ class Application(Adw.Application):
         self._dbus_client = DBusClient()
         self._socket_server = SocketServer()
         self._bridge = BridgeManager(_PROJECT_ROOT, self._dbus_client)
-        self._installer = GitHubInstaller()
+        # One shared provenance registry (sources.json) backs both installers.
+        self._registry = SourceRegistry()
+        self._installer = GitHubInstaller(self._registry)
+        self._ego_installer = EgoInstaller(self._registry, EgoClient())
         self._win: MainWindow | None = None
         self._bootstrap_handler: int = 0
         self._update_check_handler: int = 0
@@ -407,6 +427,7 @@ class Application(Adw.Application):
             socket_server=self._socket_server,
             bridge=self._bridge,
             installer=self._installer,
+            ego_installer=self._ego_installer,
         )
         self.set_accels_for_action("win.toggle-sidebar", ["F9"])
         about_action = Gio.SimpleAction.new("about", None)
@@ -472,11 +493,12 @@ class Application(Adw.Application):
     def _on_ready_for_update_check(
         self, _dbus: DBusClient, extensions: dict[str, Any]
     ) -> None:
-        # Run the GitHub update check exactly once, on the first extensions list.
+        # Run the update checks exactly once, on the first extensions list.
         if self._update_check_handler:
             self._dbus_client.disconnect(self._update_check_handler)
             self._update_check_handler = 0
         self._installer.check_updates(extensions)
+        self._ego_installer.check_updates(extensions, self._dbus_client.shell_version)
 
 
 def main() -> None:

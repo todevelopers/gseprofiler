@@ -1,4 +1,4 @@
-"""Persistent registry mapping extension UUIDs to their GitHub source.
+"""Persistent registry mapping extension UUIDs to their install source.
 
 Stored as ``sources.json`` in the app's own data directory so we never
 modify the upstream extension's ``metadata.json``.  All I/O is defensive:
@@ -6,8 +6,13 @@ a missing, unreadable, or corrupt file degrades gracefully to an empty
 registry, and writes are atomic (temp file + ``os.replace``) so a crash
 mid-write cannot truncate the store.
 
-Expected scale is tens of GitHub-sourced extensions, so a flat JSON file
-loaded into memory is plenty — no database needed.
+Two source kinds are stored side by side, discriminated by a ``kind`` field
+on each entry: ``"github"`` (a :class:`GitHubSource`) and ``"ego"`` (an
+:class:`EgoSource`, extensions.gnome.org).  Entries written before the EGO
+support existed have no ``kind`` field and are read back as GitHub sources.
+
+Expected scale is tens of extensions, so a flat JSON file loaded into memory
+is plenty — no database needed.
 """
 
 from __future__ import annotations
@@ -18,9 +23,20 @@ import os
 import tempfile
 from pathlib import Path
 
+from app.core.ego_source import EgoSource
 from app.core.github_source import GitHubSource
 
 _log = logging.getLogger(__name__)
+
+#: Either provenance kind stored in the registry.
+Source = GitHubSource | EgoSource
+
+
+def _serialize(src: Source) -> dict:
+    """Serialise a source to a JSON dict tagged with its discriminator kind."""
+    entry = src.to_dict()
+    entry["kind"] = "ego" if isinstance(src, EgoSource) else "github"
+    return entry
 
 
 def _default_path() -> Path:
@@ -41,11 +57,11 @@ def _default_path() -> Path:
 
 
 class SourceRegistry:
-    """UUID → :class:`GitHubSource` map persisted to ``sources.json``."""
+    """UUID → :class:`Source` map persisted to ``sources.json``."""
 
     def __init__(self, path: Path | str | None = None) -> None:
         self._path = Path(path) if path is not None else _default_path()
-        self._sources: dict[str, GitHubSource] = {}
+        self._sources: dict[str, Source] = {}
         self._load()
 
     # ── Loading ──────────────────────────────────────────────────────────
@@ -70,12 +86,18 @@ class SourceRegistry:
             )
             self._sources = {}
             return
-        sources: dict[str, GitHubSource] = {}
+        sources: dict[str, Source] = {}
         if isinstance(data, dict):
             for uuid, entry in data.items():
                 if not isinstance(entry, dict):
                     continue
-                src = GitHubSource.from_dict(entry)
+                # Absent ``kind`` means a pre-EGO GitHub entry.
+                kind = entry.get("kind", "github")
+                src: Source | None
+                if kind == "ego":
+                    src = EgoSource.from_dict(entry)
+                else:
+                    src = GitHubSource.from_dict(entry)
                 if src is not None:
                     sources[uuid] = src
         self._sources = sources
@@ -83,7 +105,7 @@ class SourceRegistry:
     # ── Persisting ───────────────────────────────────────────────────────
 
     def _persist(self) -> None:
-        data = {uuid: src.to_dict() for uuid, src in self._sources.items()}
+        data = {uuid: _serialize(src) for uuid, src in self._sources.items()}
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(
@@ -105,10 +127,10 @@ class SourceRegistry:
 
     # ── Public API ───────────────────────────────────────────────────────
 
-    def get(self, uuid: str) -> GitHubSource | None:
+    def get(self, uuid: str) -> Source | None:
         return self._sources.get(uuid)
 
-    def set(self, uuid: str, source: GitHubSource) -> None:
+    def set(self, uuid: str, source: Source) -> None:
         self._sources[uuid] = source
         self._persist()
 
@@ -120,7 +142,7 @@ class SourceRegistry:
             return True
         return False
 
-    def all(self) -> dict[str, GitHubSource]:
+    def all(self) -> dict[str, Source]:
         """Return a copy of the full UUID → source map."""
         return dict(self._sources)
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.core.ego_source import EgoSource
 from app.core.github_source import GitHubSource
 from app.core.source_registry import SourceRegistry
 
@@ -24,6 +25,17 @@ def _src(sha: str = "abc1234", owner: str = "o", repo: str = "r") -> GitHubSourc
         ref="main",
         commit_sha=sha,
         installed_at="2026-05-28T10:00:00+00:00",
+    )
+
+
+def _ego(pk: int = 307, uuid: str = "d@d", version: int = 105) -> EgoSource:
+    return EgoSource(
+        pk=pk,
+        uuid=uuid,
+        version=version,
+        version_tag=69959,
+        name="Dash to Dock",
+        installed_at="2026-07-14T10:00:00+00:00",
     )
 
 
@@ -117,3 +129,65 @@ def test_all_returns_copy(tmp_path: Path) -> None:
     snapshot = reg.all()
     snapshot.clear()
     assert reg.get("a@a") is not None  # internal state untouched
+
+
+# ─── EGO sources + mixed kinds ─────────────────────────────────────────────
+
+
+def test_ego_set_get_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "sources.json"
+    SourceRegistry(path).set("d@d", _ego(version=105))
+
+    out = SourceRegistry(path).get("d@d")
+    assert isinstance(out, EgoSource)
+    assert out.version == 105
+    assert out.pk == 307
+
+
+def test_mixed_kinds_load(tmp_path: Path) -> None:
+    path = tmp_path / "sources.json"
+    reg = SourceRegistry(path)
+    reg.set("gh@x", _src("deadbeef"))
+    reg.set("ego@x", _ego(uuid="ego@x"))
+
+    reloaded = SourceRegistry(path)
+    assert isinstance(reloaded.get("gh@x"), GitHubSource)
+    assert isinstance(reloaded.get("ego@x"), EgoSource)
+
+
+def test_kindless_entry_loads_as_github(tmp_path: Path) -> None:
+    """Pre-EGO sources.json entries have no ``kind`` and are GitHub sources."""
+    path = tmp_path / "sources.json"
+    path.write_text(
+        json.dumps({"gh@x": _src("cafef00d").to_dict()}),  # no "kind"
+        encoding="utf-8",
+    )
+    out = SourceRegistry(path).get("gh@x")
+    assert isinstance(out, GitHubSource)
+    assert out.commit_sha == "cafef00d"
+
+
+def test_malformed_ego_entry_dropped(tmp_path: Path) -> None:
+    path = tmp_path / "sources.json"
+    path.write_text(
+        json.dumps(
+            {
+                "good@x": {**_ego(uuid="good@x").to_dict(), "kind": "ego"},
+                "bad@x": {"kind": "ego", "uuid": "bad@x"},  # missing version/pk
+            }
+        ),
+        encoding="utf-8",
+    )
+    reg = SourceRegistry(path)
+    assert set(reg.all()) == {"good@x"}
+
+
+def test_persist_tags_kind(tmp_path: Path) -> None:
+    path = tmp_path / "sources.json"
+    reg = SourceRegistry(path)
+    reg.set("gh@x", _src())
+    reg.set("ego@x", _ego(uuid="ego@x"))
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["gh@x"]["kind"] == "github"
+    assert raw["ego@x"]["kind"] == "ego"

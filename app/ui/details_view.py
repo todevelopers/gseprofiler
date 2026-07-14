@@ -24,13 +24,17 @@ from app.core.dbus_client import (
     DBusClient,
     ExtensionState,
 )
+from app.core.ego_installer import EgoInstaller
+from app.core.ego_source import EgoSource
 from app.core.extension_remover import remove_extension
 from app.core.github_installer import GitHubInstaller, GitHubSource
 from app.core.shell_restart import prompt_shell_restart
+from app.core.source_registry import SourceRegistry
 
 _log = logging.getLogger(__name__)
 
 _CHECK_SUBTITLE = "Pull the latest commit and reinstall"
+_EGO_CHECK_SUBTITLE = "Check extensions.gnome.org and reinstall"
 
 
 class DetailsView(Gtk.Stack):
@@ -46,15 +50,18 @@ class DetailsView(Gtk.Stack):
         self,
         dbus_client: DBusClient,
         installer: GitHubInstaller | None = None,
+        ego_installer: EgoInstaller | None = None,
     ) -> None:
         super().__init__()
         self._dbus = dbus_client
         self._installer = installer
+        self._ego = ego_installer
         self._active_uuid: str | None = None
         self._all_extensions: dict[str, Any] = {}
         self._pending_disable = False
         self._switch_handler: int = 0
         self._active_source: GitHubSource | None = None
+        self._active_ego_source: EgoSource | None = None
 
         self._build_ui()
         dbus_client.connect("extensions-changed", self._on_extensions_changed)
@@ -179,6 +186,7 @@ class DetailsView(Gtk.Stack):
 
         self._github_repo_row = Adw.ActionRow()
         self._github_repo_row.set_title("Repository")
+        self._github_repo_row.set_icon_name("source-github-symbolic")
         self._github_open_btn = Gtk.Button(icon_name="adw-external-link-symbolic")
         self._github_open_btn.add_css_class("flat")
         self._github_open_btn.set_valign(Gtk.Align.CENTER)
@@ -223,6 +231,53 @@ class DetailsView(Gtk.Stack):
         self._github_group.add(self._github_update_row)
 
         page.add(self._github_group)
+
+        # ── EGO source group (only visible for EGO-sourced extensions) ──────
+        self._ego_group = Adw.PreferencesGroup()
+        self._ego_group.set_title("extensions.gnome.org")
+        self._ego_group.set_visible(False)
+
+        self._ego_page_row = Adw.ActionRow()
+        self._ego_page_row.set_title("Extension page")
+        self._ego_page_row.set_icon_name("source-gnome-symbolic")
+        self._ego_page_row.set_subtitle_lines(1)
+        self._ego_page_row.set_subtitle_selectable(True)
+        self._ego_open_btn = Gtk.Button(icon_name="adw-external-link-symbolic")
+        self._ego_open_btn.add_css_class("flat")
+        self._ego_open_btn.set_valign(Gtk.Align.CENTER)
+        self._ego_open_btn.set_tooltip_text("Open on extensions.gnome.org")
+        self._ego_open_btn.connect("clicked", self._on_open_ego_page)
+        self._ego_page_row.add_suffix(self._ego_open_btn)
+        self._ego_group.add(self._ego_page_row)
+
+        self._ego_version_row = Adw.ActionRow()
+        self._ego_version_row.set_title("Installed version")
+        self._ego_group.add(self._ego_version_row)
+
+        self._ego_check_row = Adw.ActionRow()
+        self._ego_check_row.set_title("Check for Updates")
+        self._ego_check_row.set_subtitle(_EGO_CHECK_SUBTITLE)
+        self._ego_check_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        self._ego_check_btn.add_css_class("flat")
+        self._ego_check_btn.set_valign(Gtk.Align.CENTER)
+        self._ego_check_btn.set_tooltip_text(
+            "Check extensions.gnome.org and reinstall if a newer version exists"
+        )
+        self._ego_check_btn.connect("clicked", self._on_ego_check_updates_clicked)
+        self._ego_check_row.add_suffix(self._ego_check_btn)
+        self._ego_group.add(self._ego_check_row)
+
+        self._ego_update_row = Adw.ActionRow()
+        self._ego_update_row.set_title("Update Available")
+        self._ego_update_btn = Gtk.Button(label="Update")
+        self._ego_update_btn.add_css_class("suggested-action")
+        self._ego_update_btn.set_valign(Gtk.Align.CENTER)
+        self._ego_update_btn.connect("clicked", self._on_ego_update_clicked)
+        self._ego_update_row.add_suffix(self._ego_update_btn)
+        self._ego_update_row.set_visible(False)
+        self._ego_group.add(self._ego_update_row)
+
+        page.add(self._ego_group)
 
         self.add_named(page, "content")
         self.set_visible_child_name("placeholder")
@@ -334,29 +389,63 @@ class DetailsView(Gtk.Stack):
         # removed by the user.
         self._uninstall_row.set_visible(bool(path) and ext_type == 2)
 
-        # GitHub source group — provenance comes from the registry, keyed
-        # by UUID (we never write into the extension's own metadata.json).
-        source = self._installer.registry.get(uuid) if self._installer else None
-        self._active_source = source
-        if source is None:
+        # Source group — provenance comes from the shared registry, keyed by
+        # UUID (we never write into the extension's own metadata.json).  Show
+        # exactly one group (GitHub or EGO) by the recorded source kind.
+        source = self._lookup_source(uuid)
+        if isinstance(source, GitHubSource):
+            self._active_source = source
+            self._active_ego_source = None
+            self._ego_group.set_visible(False)
+            self._populate_github(uuid, source)
+        elif isinstance(source, EgoSource):
+            self._active_source = None
+            self._active_ego_source = source
             self._github_group.set_visible(False)
+            self._populate_ego(uuid, source)
         else:
-            self._github_group.set_visible(True)
-            repo_subtitle = f"github.com/{source.owner}/{source.repo}"
-            if source.subpath:
-                repo_subtitle += f"  ›  {source.subpath}"
-            self._github_repo_row.set_subtitle(repo_subtitle)
-            commit_text = source.short_sha or source.commit_sha
-            if source.ref:
-                commit_text = f"{commit_text}  ({source.ref})"
-            self._github_commit_row.set_subtitle(commit_text or "—")
-            self._github_commit_btn.set_sensitive(bool(source.commit_sha))
-            self._github_check_row.set_subtitle(_CHECK_SUBTITLE)
-            self._github_check_btn.set_sensitive(self._installer is not None)
-            new_sha = (
-                self._installer.has_update(uuid) if self._installer else None
-            )
-            self._set_update_row(new_sha)
+            self._active_source = None
+            self._active_ego_source = None
+            self._github_group.set_visible(False)
+            self._ego_group.set_visible(False)
+
+    def _registry(self) -> SourceRegistry | None:
+        """The shared source registry via whichever installer is wired."""
+        if self._installer is not None:
+            return self._installer.registry
+        if self._ego is not None:
+            return self._ego.registry
+        return None
+
+    def _lookup_source(self, uuid: str) -> GitHubSource | EgoSource | None:
+        """Registry lookup via whichever installer is wired (they share one)."""
+        registry = self._registry()
+        return registry.get(uuid) if registry is not None else None
+
+    def _populate_github(self, uuid: str, source: GitHubSource) -> None:
+        self._github_group.set_visible(True)
+        repo_subtitle = f"github.com/{source.owner}/{source.repo}"
+        if source.subpath:
+            repo_subtitle += f"  ›  {source.subpath}"
+        self._github_repo_row.set_subtitle(repo_subtitle)
+        commit_text = source.short_sha or source.commit_sha
+        if source.ref:
+            commit_text = f"{commit_text}  ({source.ref})"
+        self._github_commit_row.set_subtitle(commit_text or "—")
+        self._github_commit_btn.set_sensitive(bool(source.commit_sha))
+        self._github_check_row.set_subtitle(_CHECK_SUBTITLE)
+        self._github_check_btn.set_sensitive(self._installer is not None)
+        new_sha = self._installer.has_update(uuid) if self._installer else None
+        self._set_update_row(new_sha)
+
+    def _populate_ego(self, uuid: str, source: EgoSource) -> None:
+        self._ego_group.set_visible(True)
+        self._ego_page_row.set_subtitle(f"extensions.gnome.org/extension/{source.pk}/")
+        self._ego_version_row.set_subtitle(source.version_label)
+        self._ego_check_row.set_subtitle(_EGO_CHECK_SUBTITLE)
+        self._ego_check_btn.set_sensitive(self._ego is not None)
+        new_version = self._ego.has_update(uuid) if self._ego else None
+        self._set_ego_update_row(new_version)
 
     def refresh_github_update(self, uuid: str, new_sha: str) -> None:
         """Called by the main window when an update becomes available."""
@@ -484,6 +573,118 @@ class DetailsView(Gtk.Stack):
         self._github_update_row.set_visible(False)
         prompt_shell_restart(parent, action="updated")
 
+    # ── EGO source handlers ──────────────────────────────────────────────
+
+    def refresh_ego_update(self, uuid: str, new_version: str) -> None:
+        """Called by the main window when an EGO update becomes available."""
+        if uuid == self._active_uuid:
+            self._set_ego_update_row(new_version)
+
+    def _set_ego_update_row(self, new_version: str | None) -> None:
+        if new_version:
+            self._ego_update_row.set_visible(True)
+            self._ego_update_row.set_subtitle(
+                f"Version v{new_version} available — click Update to reinstall."
+            )
+        else:
+            self._ego_update_row.set_visible(False)
+
+    def _on_open_ego_page(self, _btn: Gtk.Button) -> None:
+        if self._active_ego_source is None:
+            return
+        try:
+            Gio.AppInfo.launch_default_for_uri(self._active_ego_source.page_url, None)
+        except GLib.Error as exc:
+            _log.warning("Failed to open EGO page: %s", exc)
+
+    def _on_ego_update_clicked(self, _btn: Gtk.Button) -> None:
+        if self._ego is None or self._active_ego_source is None:
+            return
+        self._ego_update_btn.set_sensitive(False)
+        self._ego_update_row.set_subtitle("Looking up extension…")
+        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
+        self._ego.update(
+            self._active_ego_source,
+            self._dbus.shell_version,
+            on_done=lambda uuid, err: self._on_ego_update_done(parent, uuid, err),
+            on_progress=self._ego_update_row.set_subtitle,
+        )
+
+    def _on_ego_update_done(
+        self,
+        parent: Gtk.Window | None,
+        uuid: str | None,
+        error: str | None,
+    ) -> None:
+        self._ego_update_btn.set_sensitive(True)
+        if error or not uuid:
+            self._ego_update_row.set_subtitle(error or "Update failed.")
+            return
+        self._ego_update_row.set_visible(False)
+        prompt_shell_restart(parent, action="updated")
+
+    def _on_ego_check_updates_clicked(self, _btn: Gtk.Button) -> None:
+        if (
+            self._ego is None
+            or self._active_ego_source is None
+            or self._active_uuid is None
+        ):
+            return
+        self._ego_check_btn.set_sensitive(False)
+        self._ego_check_row.set_subtitle("Checking for updates…")
+        src = self._active_ego_source
+        parent = self.get_root() if isinstance(self.get_root(), Gtk.Window) else None
+        self._ego.check_update(
+            self._active_uuid,
+            src,
+            self._dbus.shell_version,
+            on_done=lambda new_version, err: self._on_ego_check_done(
+                parent, src, new_version, err
+            ),
+        )
+
+    def _on_ego_check_done(
+        self,
+        parent: Gtk.Window | None,
+        src: EgoSource,
+        new_version: str | None,
+        error: str | None,
+    ) -> None:
+        if error:
+            self._ego_check_btn.set_sensitive(True)
+            self._ego_check_row.set_subtitle(error)
+            return
+        if not new_version:
+            self._ego_check_btn.set_sensitive(True)
+            self._ego_check_row.set_subtitle("Up to date.")
+            return
+        if self._ego is None:
+            self._ego_check_btn.set_sensitive(True)
+            return
+        self._ego_check_row.set_subtitle(
+            f"Version v{new_version} found — downloading…"
+        )
+        self._ego.update(
+            src,
+            self._dbus.shell_version,
+            on_done=lambda uuid, err: self._on_ego_check_installed(parent, uuid, err),
+            on_progress=self._ego_check_row.set_subtitle,
+        )
+
+    def _on_ego_check_installed(
+        self,
+        parent: Gtk.Window | None,
+        uuid: str | None,
+        error: str | None,
+    ) -> None:
+        self._ego_check_btn.set_sensitive(True)
+        if error or not uuid:
+            self._ego_check_row.set_subtitle(error or "Update failed.")
+            return
+        self._ego_check_row.set_subtitle("Up to date.")
+        self._ego_update_row.set_visible(False)
+        prompt_shell_restart(parent, action="updated")
+
     def _on_uninstall_clicked(self, _btn: Gtk.Button) -> None:
         if self._active_uuid is None:
             return
@@ -526,8 +727,9 @@ class DetailsView(Gtk.Stack):
             return
         # Drop the provenance entry too (reconcile would also catch it, but
         # do it eagerly so the registry stays in step with the filesystem).
-        if self._installer is not None:
-            self._installer.registry.remove(uuid)
+        registry = self._registry()
+        if registry is not None:
+            registry.remove(uuid)
         # Force-refresh and prompt for logout so gnome-shell forgets it.
         self._dbus.list_extensions()
         if self._active_uuid == uuid:
