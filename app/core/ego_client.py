@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
@@ -108,17 +109,24 @@ class EgoClient:
 
     def fetch_info(
         self,
-        uuid: str,
+        uuid: str | None,
         shell_version: str | None,
         on_done: InfoCallback,
+        pk: int | None = None,
     ) -> None:
-        """Fetch full metadata for ``uuid`` (async).
+        """Fetch full metadata for an extension (async).
 
-        With ``shell_version`` set, the returned ``version`` / ``version_tag``
-        / ``download_url`` reflect the newest version compatible with that
-        shell; without it, the absolute latest.
+        Looked up by ``uuid`` or, when ``pk`` is given (e.g. parsed from an
+        extension URL), by primary key.  With ``shell_version`` set, the
+        returned ``version`` / ``version_tag`` / ``download_url`` reflect the
+        newest version compatible with that shell; without it, the absolute
+        latest.
         """
-        params: dict[str, str] = {"uuid": uuid}
+        params: dict[str, str] = {}
+        if pk is not None:
+            params["pk"] = str(pk)
+        elif uuid:
+            params["uuid"] = uuid
         if shell_version:
             params["shell_version"] = shell_version
         url = f"{_INFO_URL}?{urlencode(params)}"
@@ -226,3 +234,25 @@ def is_compatible(shell_version_map: dict[str, Any], shell_version: str | None) 
     if not shell_version:
         return True
     return shell_version in (shell_version_map or {})
+
+
+_EGO_URL_RE = re.compile(r"extensions\.gnome\.org/extension/(\d+)")
+
+
+def parse_ego_input(text: str) -> tuple[str, str | int] | None:
+    """Classify install-dialog input as a direct EGO reference, or ``None``.
+
+    Returns ``("pk", <int>)`` for an extensions.gnome.org extension URL,
+    ``("uuid", <str>)`` for a bare extension UUID (``name@domain``), or
+    ``None`` when the text should be treated as a free-text search query.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    m = _EGO_URL_RE.search(text)
+    if m:
+        return ("pk", int(m.group(1)))
+    # A UUID looks like ``foo@bar`` with no whitespace or path separators.
+    if "@" in text and " " not in text and "/" not in text:
+        return ("uuid", text)
+    return None

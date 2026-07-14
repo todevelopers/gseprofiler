@@ -83,8 +83,14 @@ class _ExtRow(Gtk.ListBoxRow):
 
         # Source badge — hidden by default, shown for extensions we installed
         # (from GitHub or from extensions.gnome.org).
+        # Source badge — symbolic, so it follows the theme foreground (same
+        # colour as the name label, light or dark).  A touch larger than the
+        # 16px default and slightly softened so it reads like the name text
+        # rather than a stark black block.
         self._source_icon = Gtk.Image.new_from_icon_name("source-github-symbolic")
         self._source_icon.set_valign(Gtk.Align.CENTER)
+        self._source_icon.set_pixel_size(18)
+        self._source_icon.set_opacity(0.8)
         self._source_icon.set_visible(False)
         box.append(self._source_icon)
 

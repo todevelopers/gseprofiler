@@ -25,7 +25,7 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk, Pango
 
-from app.core.ego_client import is_compatible
+from app.core.ego_client import is_compatible, parse_ego_input
 from app.core.ego_installer import EgoInstaller
 from app.core.github_installer import GitHubInstaller
 from app.core.shell_restart import prompt_shell_restart
@@ -111,16 +111,11 @@ class InstallDialog(Adw.Dialog):
         toolbar = Adw.ToolbarView()
 
         header = Adw.HeaderBar()
-        header.set_show_end_title_buttons(False)
+        # Use the dialog's own (rounded) close button on the end, matching the
+        # rest of the app, instead of a custom Cancel/X.  With Install moved to
+        # the bottom bar the header is free for the full-width view switcher.
         header.set_show_start_title_buttons(False)
-
-        # A compact close button (instead of a "Cancel" label) leaves the full
-        # header width to the view switcher so "extensions.gnome.org" fits.
-        self._close_btn = Gtk.Button(icon_name="window-close-symbolic")
-        self._close_btn.add_css_class("flat")
-        self._close_btn.set_tooltip_text("Close")
-        self._close_btn.connect("clicked", lambda _b: self.close())
-        header.pack_start(self._close_btn)
+        header.set_show_end_title_buttons(True)
 
         self._stack = Adw.ViewStack()
         github_page = self._stack.add_titled(
@@ -232,7 +227,9 @@ class InstallDialog(Adw.Dialog):
         body.set_margin_bottom(6)
 
         self._search = Gtk.SearchEntry()
-        self._search.set_placeholder_text("Search extensions.gnome.org…")
+        self._search.set_placeholder_text(
+            "Search, or paste an extension URL or UUID…"
+        )
         self._search.connect("search-changed", self._on_search_changed)
         self._search.connect("activate", lambda _s: self._focus_first_result())
         body.append(self._search)
@@ -244,10 +241,19 @@ class InstallDialog(Adw.Dialog):
         self._results = Gtk.ListBox()
         self._results.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._results.add_css_class("boxed-list")
+        # Selecting a row only enables the Install button — installing is an
+        # explicit action via that button, never a side effect of clicking a
+        # result.
         self._results.connect("row-selected", lambda _lb, _r: self._update_install_sensitivity())
-        self._results.connect("row-activated", self._on_result_activated)
 
-        placeholder = Gtk.Label(label="Type an extension name to search.")
+        placeholder = Gtk.Label(
+            label=(
+                "Search by name, or paste an extensions.gnome.org URL "
+                "or an extension UUID."
+            )
+        )
+        placeholder.set_wrap(True)
+        placeholder.set_justify(Gtk.Justification.CENTER)
         placeholder.add_css_class("dim-label")
         placeholder.set_margin_top(24)
         placeholder.set_margin_bottom(24)
@@ -260,6 +266,12 @@ class InstallDialog(Adw.Dialog):
     # ── State helpers ─────────────────────────────────────────────────────
 
     def _on_tab_changed(self, _stack: Adw.ViewStack, _pspec: object) -> None:
+        # A status/error belongs to the tab that produced it — clear it when
+        # the user switches away so an EGO incompatibility note doesn't linger
+        # on the GitHub tab.
+        if not self._busy:
+            self._status_label.remove_css_class("error")
+            self._status_box.set_visible(False)
         self._update_install_sensitivity()
 
     def _update_install_sensitivity(self) -> None:
@@ -274,7 +286,6 @@ class InstallDialog(Adw.Dialog):
 
     def _set_busy(self, busy: bool, label: str = "") -> None:
         self._busy = busy
-        self._close_btn.set_sensitive(True)
         self._repo_row.set_sensitive(not busy)
         self._search.set_sensitive(not busy)
         self._results.set_sensitive(not busy)
@@ -348,10 +359,6 @@ class InstallDialog(Adw.Dialog):
             on_progress=self._on_progress,
         )
 
-    def _on_result_activated(self, _lb: Gtk.ListBox, _row: Gtk.ListBoxRow) -> None:
-        if not self._busy:
-            self._install_ego()
-
     def _on_progress(self, message: str) -> None:
         if self._busy:
             self._status_label.set_label(message)
@@ -388,6 +395,12 @@ class InstallDialog(Adw.Dialog):
             self._clear_results()
             self._status_box.set_visible(False)
             return False  # GLib.SOURCE_REMOVE
+        # A pasted extension URL or UUID is looked up directly and shown as a
+        # single result, instead of a free-text search.
+        direct = parse_ego_input(term)
+        if direct is not None:
+            self._lookup_direct(direct)
+            return False  # GLib.SOURCE_REMOVE
         self._show_status("Searching…", error=False)
         self._spinner.set_visible(True)
         self._spinner.start()
@@ -402,6 +415,35 @@ class InstallDialog(Adw.Dialog):
             self._search_cancellable,
         )
         return False  # GLib.SOURCE_REMOVE
+
+    def _lookup_direct(self, direct: tuple[str, str | int]) -> None:
+        """Resolve a pasted extension URL/UUID and show it as one result."""
+        self._show_status("Looking up extension…", error=False)
+        self._spinner.set_visible(True)
+        self._spinner.start()
+        kind, value = direct
+        # Look up unfiltered (shell_version=None) so we still find and badge
+        # extensions that don't support the running shell.
+        if kind == "pk":
+            self._ego.client.fetch_info(
+                None, None, self._on_direct_info, pk=int(value)
+            )
+        else:
+            self._ego.client.fetch_info(str(value), None, self._on_direct_info)
+
+    def _on_direct_info(
+        self, info: dict[str, Any] | None, error: str | None
+    ) -> None:
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        if error is not None:
+            self._show_status(error, error=True)
+            return
+        if info is None:
+            self._show_status("Extension not found.", error=True)
+            return
+        # An info reply carries the same fields a search result row needs.
+        self._on_search_results([info], None)
 
     def _on_search_results(
         self, results: list[dict[str, Any]] | None, error: str | None

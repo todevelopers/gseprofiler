@@ -114,3 +114,35 @@ def test_is_compatible() -> None:
     # Unknown shell version → assume compatible rather than hide everything.
     assert is_compatible(svm, None) is True
     assert is_compatible({}, "48") is False
+
+
+# ─── Direct input parsing ──────────────────────────────────────────────────
+
+
+def test_parse_ego_input_url() -> None:
+    from app.core.ego_client import parse_ego_input
+
+    assert parse_ego_input(
+        "https://extensions.gnome.org/extension/307/dash-to-dock/"
+    ) == ("pk", 307)
+    assert parse_ego_input("extensions.gnome.org/extension/42/foo") == ("pk", 42)
+
+
+def test_parse_ego_input_uuid() -> None:
+    from app.core.ego_client import parse_ego_input
+
+    assert parse_ego_input("dash-to-dock@micxgx.gmail.com") == (
+        "uuid",
+        "dash-to-dock@micxgx.gmail.com",
+    )
+    assert parse_ego_input("  myext@me  ") == ("uuid", "myext@me")
+
+
+def test_parse_ego_input_search_term() -> None:
+    from app.core.ego_client import parse_ego_input
+
+    # Free-text queries and GitHub-style owner/repo are not direct references.
+    assert parse_ego_input("dash to dock") is None
+    assert parse_ego_input("clipboard") is None
+    assert parse_ego_input("owner/repo") is None
+    assert parse_ego_input("") is None
