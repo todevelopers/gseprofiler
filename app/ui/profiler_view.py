@@ -961,7 +961,7 @@ class ProfilerView(Gtk.Stack):
     # ── Global (bridge) shortcut handlers ─────────────────────────────────
 
     def _handle_global_toggle(self) -> None:
-        """Start/stop from the global Super+F9 shortcut (app may be unfocused)."""
+        """Start/stop from the global Super+F5 shortcut (app may be unfocused)."""
         self.emit("request-attention")
         if self._profiling:
             self._stop_profiling()
@@ -973,7 +973,7 @@ class ProfilerView(Gtk.Stack):
             self.emit("show-toast", "Select an enabled extension to start profiling")
 
     def _handle_global_restart(self) -> None:
-        """Stop → clear → start from the global Super+Shift+F9 shortcut.
+        """Stop → clear → start from the global Super+Shift+F5 shortcut.
 
         Data is cleared only when profiling can actually be restarted — never
         wipe a recorded session if there is nothing to restart into (no target,

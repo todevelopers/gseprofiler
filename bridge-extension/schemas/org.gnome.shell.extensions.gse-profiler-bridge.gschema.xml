@@ -3,7 +3,7 @@
   <schema id="org.gnome.shell.extensions.gse-profiler-bridge"
           path="/org/gnome/shell/extensions/gse-profiler-bridge/">
     <key name="toggle-profiling" type="as">
-      <default><![CDATA[['<Super>F9']]]></default>
+      <default><![CDATA[['<Super>F5']]]></default>
       <summary>Toggle profiling</summary>
       <description>
         Start or stop profiling the extension currently selected in the GSE
@@ -11,7 +11,7 @@
       </description>
     </key>
     <key name="restart-profiling" type="as">
-      <default><![CDATA[['<Super><Shift>F9']]]></default>
+      <default><![CDATA[['<Super><Shift>F5']]]></default>
       <summary>Restart profiling</summary>
       <description>
         Stop, clear, and restart profiling the extension currently selected in

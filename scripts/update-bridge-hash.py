@@ -13,9 +13,16 @@ META_PATH = BRIDGE_DIR / "metadata.json"
 
 def compute_hash(bridge_dir: Path) -> str:
     h = hashlib.sha256()
-    for path in sorted(bridge_dir.glob("*.js")):
+    # Hash every installed source file so any change — JS or the GSettings
+    # schema (which drives the global shortcuts) — bumps the hash and makes
+    # the app offer a bridge reinstall. Content is LF-normalised so the value
+    # is identical whether computed on a CRLF (Windows) or LF (CI) checkout.
+    paths = sorted(bridge_dir.glob("*.js")) + sorted(
+        bridge_dir.glob("schemas/*.gschema.xml")
+    )
+    for path in paths:
         h.update(path.name.encode())
-        h.update(path.read_bytes())
+        h.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()
 
 

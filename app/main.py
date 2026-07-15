@@ -352,7 +352,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ── Global-shortcut feedback (from ProfilerView) ───────────────────────
 
     def _on_profiler_toast(self, _view: ProfilerView, message: str) -> None:
-        # Only ever show one shortcut-feedback toast at a time. Rapid Super+F9
+        # Only ever show one shortcut-feedback toast at a time. Rapid Super+F5
         # presses would otherwise queue a toast each, which the user then has
         # to dismiss one by one — dismiss the previous before adding the next.
         if self._active_toast is not None:
