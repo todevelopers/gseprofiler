@@ -275,29 +275,17 @@ nested object paths and `Gio.Settings`, so it belongs in V2.
 
 ### Bridge side
 
-- [ ] `setProperty(uuid, path, name, value)` — walk `stateObj` down `path`,
-  
-      then assign to `target[name]`. Honour both data descriptors with `writable: true`
-      and accessor descriptors with a setter.
+- [ ] `setProperty(uuid, path, name, value)` — walk `stateObj` down `path`, then assign to `target[name]`. Honour both data descriptors with `writable: true` and accessor descriptors with a setter.
 
-- [ ] Detect `Gio.Settings` instances during serialization; expose their keys as
-  
-      writable children with their declared schema type (`b`, `i`, `d`, `s`, enums).
+- [ ] Detect `Gio.Settings` instances during serialization; expose their keys as writable children with their declared schema type (`b`, `i`, `d`, `s`, enums).
 
-- [ ] Re-introduce a `writable` flag in `inspect_result` for each property — only
-  
-      `true` when the property is actually assignable on the current `holder`
-      (own data prop, accessor with setter, or known GSettings key).
+- [ ] Re-introduce a `writable` flag in `inspect_result` for each property — only `true` when the property is actually assignable on the current `holder` (own data prop, accessor with setter, or known GSettings key).
 
-- [ ] Validate `set_property` values against the property's reported type before
-  
-      assigning; reject with a typed error instead of throwing.
+- [ ] Validate `set_property` values against the property's reported type before assigning; reject with a typed error instead of throwing.
 
 ### App side
 
-- [ ] Render a "writable" affordance on rows that can be edited (e.g. an edit
-  
-      pencil icon that appears on hover, mirroring the drill-in chevron).
+- [ ] Render a "writable" affordance on rows that can be edited (e.g. an edit pencil icon that appears on hover, mirroring the drill-in chevron).
 
 - [ ] Adwaita `AlertDialog` for edit, with a control matched to the type:
   
@@ -308,15 +296,11 @@ nested object paths and `Gio.Settings`, so it belongs in V2.
 
 - [ ] Send `set_property` with the current navigation `path` and the row `name`.
 
-- [ ] On `set_property_result.ok` → re-issue `inspect` at the current path and
-  
-      flash the affected row briefly to confirm the write.
+- [ ] On `set_property_result.ok` → re-issue `inspect` at the current path and flash the affected row briefly to confirm the write.
 
 - [ ] On `set_property_result.error` → `Adw.Toast` with the bridge's error message.
 
-- [ ] Drop stale `set_property_result`s where `extensionUuid` / `path` no longer
-  
-      match the active navigation (same pattern as stale `inspect_result`s).
+- [ ] Drop stale `set_property_result`s where `extensionUuid` / `path` no longer match the active navigation (same pattern as stale `inspect_result`s).
 
 ### Protocol additions
 
@@ -359,10 +343,7 @@ adjustment across major GNOME versions.
 
 - [ ] New message handler `enable_and_profile { uuid }` in `extension.js`
 
-- [ ] `Profiler.armForEnable(uuid)` — connects to `extensionManager`'s
-  
-      `extension-state-changed`, patches `stateObj` on first ENABLED transition,
-      then disconnects the signal handler
+- [ ] `Profiler.armForEnable(uuid)` — connects to `extensionManager`'s `extension-state-changed`, patches `stateObj` on first ENABLED transition, then disconnects the signal handler
 
 - [ ] Teardown: if enable fails or takes > 10 s, disarm and emit `profiling_error`
 
@@ -398,7 +379,7 @@ A standard GTK4 app cannot capture keys while it has no focus — and on Wayland
   - Key: `toggle-profiling` — type `as` (array of strings), default `['<Super>F9']`
   - Compile schema with `glib-compile-schemas` on bridge install
 
-- [ ] In `extension.js` `enable()`: register keybinding  
+- [ ] In `extension.js` `enable()`: register keybinding
   
   ```js
   global.display.add_keybinding(
@@ -446,49 +427,25 @@ the same socket pipeline.
 
 ### Latent bugs (from 2026-06 code review)
 
-- [ ] `profiler.js` — `_dbg()` calls `bridgeLog`, which is not imported (only
-  
-      `bridgeLogError` / `bridgeLogWarning` are); a `ReferenceError` waits for the first
-      `DEBUG = true` session
-- [ ] `Profiler.stopProfiling()` — when the original function came from the prototype,
-  
-      restore with `delete holder[name]` instead of assigning an own property; the patch
-      currently leaves an own-property shadow on the instance after restore
-- [ ] `inspector.js` — getters are invoked eagerly during serialization; GObject getters
-  
-      can have side effects, so opening the Inspector can mutate the inspected extension.
-      Report getters lazily (`type: "getter"`) and evaluate only on an explicit
-      "invoke getter" action
+- [ ] `profiler.js` — `_dbg()` calls `bridgeLog`, which is not imported (only `bridgeLogError` / `bridgeLogWarning` are); a `ReferenceError` waits for the first `DEBUG = true` session
+- [ ] `Profiler.stopProfiling()` — when the original function came from the prototype, restore with `delete holder[name]` instead of assigning an own property; the patch currently leaves an own-property shadow on the instance after restore
+- [ ] `inspector.js` — getters are invoked eagerly during serialization; GObject getters can have side effects, so opening the Inspector can mutate the inspected extension. Report getters lazily (`type: "getter"`) and evaluate only on an explicit "invoke getter" action
 
 ### Event batching
 
-- [ ] Bridge: buffer profile events and flush as
-  
-      `{ type: "profile_batch", events: [...] }` every ~50 ms or after N events — today
-      every wrapped call does its own socket write from inside `gnome-shell`, so profiling
-      a hot path floods the shell's main loop and skews the measurement
-- [ ] App: handle `profile_batch` in `profiler_view.py` (keep accepting single
-  
-      `profile_event` for backward compatibility)
+- [ ] Bridge: buffer profile events and flush as `{ type: "profile_batch", events: [...] }` every ~50 ms or after N events — today every wrapped call does its own socket write from inside `gnome-shell`, so profiling a hot path floods the shell's main loop and skews the measurement
+- [ ] App: handle `profile_batch` in `profiler_view.py` (keep accepting single `profile_event` for backward compatibility)
 
 ### Async function profiling
 
-- [ ] Wrapper: detect a `Promise` return value and tag the event `async: true` — today the
-  
-      event closes in `finally` when the synchronous part returns, so async methods report
-      setup cost, not end-to-end latency
-- [ ] Track settle time: attach `.finally()` to the returned promise and record an
-  
-      `asyncEnd` timestamp (extended event schema or a follow-up event)
+- [ ] Wrapper: detect a `Promise` return value and tag the event `async: true` — today the event closes in `finally` when the synchronous part returns, so async methods report setup cost, not end-to-end latency
+- [ ] Track settle time: attach `.finally()` to the returned promise and record an `asyncEnd` timestamp (extended event schema or a follow-up event)
 - [ ] UI: distinguish async events visually (badge in tooltip / hatched bar)
 - [x] README: documented that only the synchronous portion is measured
 
 ### Protocol versioning
 
-- [ ] App validates `hello.version` on handshake; on mismatch the connection chip shows
-  
-      **Bridge outdated** instead of Connected (covers the "user skipped the logout, old
-      bridge still running" case the install-time bundle-hash check cannot catch)
+- [ ] App validates `hello.version` on handshake; on mismatch the connection chip shows **Bridge outdated** instead of Connected (covers the "user skipped the logout, old bridge still running" case the install-time bundle-hash check cannot catch)
 
 ---
 
@@ -496,26 +453,11 @@ the same socket pipeline.
 
 **Goal:** Pay down structural debt before phases 7 / 11 / 12 grow the codebase further.
 
-- [ ] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`,
-  
-      mirroring the `app/ui/profiler/` split — natural seams: capture panel, tag bar +
-      chip fitting, list-view factories, main view
-- [ ] Unify settings persistence — `_settings_path` / `_load_settings` / `_save_settings`
-  
-      are duplicated in `profiler_view.py` and `log_viewer.py` with diverging merge
-      semantics → single `app/core/settings.py` (becomes the seam for the Phase 9
-      GSettings backend)
-- [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to
-  
-      `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the
-      Flatpak manifest and the Phase 10 RPM spec)
-- [ ] `socket_server.py` — extract `_reset_connection()`; the connection-teardown block is
-  
-      copy-pasted 3× (error path, EOF path, `stop()`)
-- [ ] Typed message router — replace per-view `message-received` filtering with
-  
-      `router.on("profile_event", cb)`-style registration before phases 7 / 11 / 12 add
-      more message types
+- [ ] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`, mirroring the `app/ui/profiler/` split — natural seams: capture panel, tag bar + chip fitting, list-view factories, main view
+- [ ] Unify settings persistence — `_settings_path` / `_load_settings` / `_save_settings` are duplicated in `profiler_view.py` and `log_viewer.py` with diverging merge semantics → single `app/core/settings.py` (becomes the seam for the Phase 9 GSettings backend)
+- [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the Flatpak manifest and the Phase 10 RPM spec)
+- [ ] `socket_server.py` — extract `_reset_connection()`; the connection-teardown block is copy-pasted 3× (error path, EOF path, `stop()`)
+- [ ] Typed message router — replace per-view `message-received` filtering with `router.on("profile_event", cb)`-style registration before phases 7 / 11 / 12 add more message types
 - [ ] Delete `tests/test_placeholder.py` (Phase 0 leftover)
 
 ---
@@ -535,7 +477,7 @@ the same socket pipeline.
 
 **Goal:** Support the place where GNOME extensions actually live, not just GitHub.
 
-- [x] Download via the EGO REST API (zip), reuse the provenance registry from the GitHu installer
+- [x] Download via the EGO REST API (zip), reuse the provenance registry from the GitHub installer
 - [x] Unified "Add extension" flow — one dialog accepting a GitHub URL or an EGO URL / search query
 
 ---
