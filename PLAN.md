@@ -542,6 +542,19 @@ the same socket pipeline.
 
 ## Backlog (unscheduled)
 
+- Bridge D-Bus control interface + socket fd-passing — keep the Unix socket as the
+  data plane (D-Bus is wrong for the high-frequency `profile_event` stream: every
+  message is double-copied through `dbus-broker`, and the sender is `gnome-shell`
+  itself, so flooding the bus would skew the very measurements we take), but let the
+  bridge export a minimal D-Bus interface on the session bus for the control plane.
+  The app then gets: presence detection via `Gio.bus_watch_name()` (replaces the 3 s
+  reconnect polling loop in `socket_client.js`), and socket fd handover via a single
+  D-Bus call with fd-passing — which removes the socket path from the protocol
+  entirely, so the Flatpak `--filesystem=xdg-run/gse-profiler:create` permission and
+  the `/run/user/<uid>/…` path workaround in `socket_server.py` collapse into one
+  `--talk-name=`. Same control-plane/data-plane split GNOME itself uses
+  (`org.gnome.Sysprof3`, Mutter screencast → PipeWire fd). Pairs well with the
+  Phase 14 event batching, which helps the socket and any future transport alike.
 - Periodic GitHub update re-check — today the check runs once at startup
   (`main.py`, `_on_ready_for_update_check`); a `GLib.timeout_add_seconds` re-check every
   few hours is a trivial add
