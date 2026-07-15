@@ -530,7 +530,7 @@ class Application(Adw.Application):
             application_name="GSE Profiler",
             application_icon="io.github.todevelopers.GseProfiler",
             version=APP_VERSION,
-            website="https://github.com/todevelopers/gse-profiler",
+            website="https://todevelopers.github.io/flatpaks/gseprofiler",
             issue_url="https://github.com/todevelopers/gse-profiler/issues",
             support_url="https://github.com/todevelopers/gse-profiler/discussions",
             license_type=Gtk.License.GPL_3_0,
