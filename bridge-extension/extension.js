@@ -87,8 +87,12 @@ export default class GSEProfilerBridge extends Extension {
                 Main.wm.addKeybinding(
                     key,
                     this._settings,
-                    Meta.KeyBindingFlags.NONE,
-                    Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+                    Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+                    // ActionMode.ALL so the shortcut still fires while a panel
+                    // menu / popup grab is open (POPUP mode) — the whole point
+                    // is that the app need not be focused. NORMAL|OVERVIEW alone
+                    // silently dropped the key whenever any panel widget was up.
+                    Shell.ActionMode.ALL,
                     () => this._socketClient?.send(message),
                 );
                 this._boundKeys.push(key);
