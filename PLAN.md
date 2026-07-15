@@ -479,7 +479,7 @@ the same socket pipeline.
 
 ---
 
-## Phase 17: Install from extensions.gnome.org
+## Phase 17: Install from extensions.gnome.org ✅
 
 **Goal:** Support the place where GNOME extensions actually live, not just GitHub.
 
@@ -538,26 +538,26 @@ the same socket pipeline.
 
 ## Milestone Summary
 
-| Phase | Milestone            | Scope                                 | Status     |
-| ----- | -------------------- | ------------------------------------- | ---------- |
-| 0     | Skeleton + CI        | Project setup                         | ✅ done     |
-| 1     | Extension Manager    | List, enable/disable                  | ✅ done     |
-| 2     | Bridge + Socket      | App ↔ Shell IPC                       | ✅ done     |
-| 3     | Log Viewer           | Live filtered logs                    | ✅ done     |
-| 4     | Profiler V1          | Timing table + flame graph            | ✅ done     |
-| 5     | Inspector            | stateObj live view (R/O)              | ✅ done     |
-| —     | Pre-release          | Polish, GitHub, Flatpak               | ✅ done     |
-| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                   | ✅ done     |
-| 6     | GitHub install       | Install extensions from GitHub        | ✅ done     |
-| 7     | Memory profiling     | Heap analysis (V2)                    | planned    |
-| 8     | Health checks        | Linting + validation (V2+)            | planned    |
-| 9     | Settings             | Preferences window (V2+)              | planned    |
-| 10    | Extended packaging   | RPM + Flathub full (V2+)              | planned    |
-| 11    | Inspector writable   | Full property editing (V2+)           | planned    |
-| 12    | Startup profiling    | Profile enable() ramp-up (V2+)        | planned    |
+| Phase | Milestone            | Scope                                                      | Status                 |
+| ----- | -------------------- | ---------------------------------------------------------- | ---------------------- |
+| 0     | Skeleton + CI        | Project setup                                              | ✅ done                 |
+| 1     | Extension Manager    | List, enable/disable                                       | ✅ done                 |
+| 2     | Bridge + Socket      | App ↔ Shell IPC                                            | ✅ done                 |
+| 3     | Log Viewer           | Live filtered logs                                         | ✅ done                 |
+| 4     | Profiler V1          | Timing table + flame graph                                 | ✅ done                 |
+| 5     | Inspector            | stateObj live view (R/O)                                   | ✅ done                 |
+| —     | Pre-release          | Polish, GitHub, Flatpak                                    | ✅ done                 |
+| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                                        | ✅ done                 |
+| 6     | GitHub install       | Install extensions from GitHub                             | ✅ done                 |
+| 7     | Memory profiling     | Heap analysis (V2)                                         | planned                |
+| 8     | Health checks        | Linting + validation (V2+)                                 | planned                |
+| 9     | Settings             | Preferences window (V2+)                                   | planned                |
+| 10    | Extended packaging   | RPM + Flathub full (V2+)                                   | planned                |
+| 11    | Inspector writable   | Full property editing (V2+)                                | planned                |
+| 12    | Startup profiling    | Profile enable() ramp-up (V2+)                             | planned                |
 | 13    | Global shortcuts     | Toggle/restart profiling via keybinding + in-app shortcuts | done (rebind deferred) |
-| 14    | Bridge hardening     | Bug fixes, batching, async profiling  | planned    |
-| 15    | Refactoring pass     | log_viewer split, settings, packaging | planned    |
-| 16    | Export & analysis    | speedscope, merged flame graph        | planned    |
-| 17    | EGO install          | Install from extensions.gnome.org     | planned    |
-| —     | opt-in Developer API | Extension author integration          | deferred ∞ |
+| 14    | Bridge hardening     | Bug fixes, batching, async profiling                       | planned                |
+| 15    | Refactoring pass     | log_viewer split, settings, packaging                      | planned                |
+| 16    | Export & analysis    | speedscope, merged flame graph                             | planned                |
+| 17    | EGO install          | Install from extensions.gnome.org                          | ✅ done                 |
+| —     | opt-in Developer API | Extension author integration                               | deferred ∞             |
