@@ -107,6 +107,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._ego_installer = ego_installer
         self._active_uuid: str | None = None
         self._last_extensions: dict[str, Any] = {}
+        self._active_toast: Adw.Toast | None = None
         self.set_title("GSE Profiler")
         self.set_default_size(*_DEFAULT_WINDOW_SIZE)
         # Enforce a minimum size so the window cannot be shrunk into the range
@@ -351,7 +352,20 @@ class MainWindow(Adw.ApplicationWindow):
     # ── Global-shortcut feedback (from ProfilerView) ───────────────────────
 
     def _on_profiler_toast(self, _view: ProfilerView, message: str) -> None:
-        self._toast_overlay.add_toast(Adw.Toast.new(message))
+        # Only ever show one shortcut-feedback toast at a time. Rapid Super+F9
+        # presses would otherwise queue a toast each, which the user then has
+        # to dismiss one by one — dismiss the previous before adding the next.
+        if self._active_toast is not None:
+            self._active_toast.dismiss()
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(3)
+        toast.connect("dismissed", self._on_toast_dismissed)
+        self._active_toast = toast
+        self._toast_overlay.add_toast(toast)
+
+    def _on_toast_dismissed(self, toast: Adw.Toast) -> None:
+        if self._active_toast is toast:
+            self._active_toast = None
 
     def _on_profiler_attention(self, _view: ProfilerView) -> None:
         # A global profiling shortcut fired — bring the Profiler tab forward

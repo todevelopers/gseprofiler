@@ -973,8 +973,17 @@ class ProfilerView(Gtk.Stack):
             self.emit("show-toast", "Select an enabled extension to start profiling")
 
     def _handle_global_restart(self) -> None:
-        """Stop → clear → start from the global Super+Shift+F9 shortcut."""
+        """Stop → clear → start from the global Super+Shift+F9 shortcut.
+
+        Data is cleared only when profiling can actually be restarted — never
+        wipe a recorded session if there is nothing to restart into (no target,
+        disabled extension, or bridge offline)."""
         self.emit("request-attention")
+        if not self._can_start_profiling():
+            if self._profiling:
+                self._stop_profiling()
+            self.emit("show-toast", "Select an enabled extension to start profiling")
+            return
         if self._profiling:
             self._stop_profiling()
         self._clear_data()
@@ -982,11 +991,8 @@ class ProfilerView(Gtk.Stack):
         self._file_label.set_tooltip_text("")
         self._flush_refresh()
         self._update_visible_child()
-        if self._can_start_profiling():
-            self._start_profiling()
-            self.emit("show-toast", "Profiling restarted (keyboard shortcut)")
-        else:
-            self.emit("show-toast", "Select an enabled extension to start profiling")
+        self._start_profiling()
+        self.emit("show-toast", "Profiling restarted (keyboard shortcut)")
 
     def _can_start_profiling(self) -> bool:
         uuid = self._target_uuid
