@@ -1,15 +1,28 @@
 'use strict';
 
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { SocketClient } from './socket_client.js';
 import { Profiler } from './profiler.js';
 import { Inspector } from './inspector.js';
-import { bridgeLog, bridgeLogWarning } from './logger.js';
+import { bridgeLog, bridgeLogError, bridgeLogWarning } from './logger.js';
 
 const DEBUG = false;
 function _dbg(...args) { if (DEBUG) { bridgeLog(args.join(' ')); } }
 
 const COMPANION_UUID = 'gse-profiler-bridge@todevelopers';
+const SETTINGS_SCHEMA = 'org.gnome.shell.extensions.gse-profiler-bridge';
+
+// Global keybindings registered in gnome-shell. Each maps a GSettings key
+// (see schemas/…gschema.xml) to a message forwarded to the app over the
+// socket. Because they are registered with the shell's window manager they
+// fire regardless of which window is focused — the whole point of Phase 13.
+const KEYBINDINGS = {
+    'toggle-profiling': { type: 'toggle_profiling' },
+    'restart-profiling': { type: 'restart_profiling' },
+};
 
 export default class GSEProfilerBridge extends Extension {
     /** @type {SocketClient | null} */
@@ -21,6 +34,12 @@ export default class GSEProfilerBridge extends Extension {
     /** @type {Inspector | null} */
     _inspector = null;
 
+    /** @type {import('gi://Gio').Gio.Settings | null} */
+    _settings = null;
+
+    /** @type {string[]} */
+    _boundKeys = [];
+
     enable() {
         this._profiler = new Profiler(event => {
             this._socketClient?.send(event);
@@ -30,9 +49,13 @@ export default class GSEProfilerBridge extends Extension {
 
         this._socketClient = new SocketClient(COMPANION_UUID, msg => this._onMessage(msg));
         this._socketClient.connect();
+
+        this._registerKeybindings();
     }
 
     disable() {
+        this._unregisterKeybindings();
+
         if (this._profiler) {
             this._profiler.stopProfiling();
             this._profiler = null;
@@ -45,6 +68,42 @@ export default class GSEProfilerBridge extends Extension {
             this._socketClient = null;
         }
 
+    }
+
+    /** Register the global profiling keybindings with the shell's window
+     *  manager. Failures (e.g. an uncompiled schema) are logged but never
+     *  break the rest of the bridge — profiling still works from the app UI. */
+    _registerKeybindings() {
+        try {
+            this._settings = this.getSettings(SETTINGS_SCHEMA);
+        } catch (e) {
+            bridgeLogError(e, 'could not load settings schema — global shortcuts disabled');
+            this._settings = null;
+            return;
+        }
+
+        for (const [key, message] of Object.entries(KEYBINDINGS)) {
+            try {
+                Main.wm.addKeybinding(
+                    key,
+                    this._settings,
+                    Meta.KeyBindingFlags.NONE,
+                    Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+                    () => this._socketClient?.send(message),
+                );
+                this._boundKeys.push(key);
+            } catch (e) {
+                bridgeLogError(e, `could not register keybinding '${key}'`);
+            }
+        }
+    }
+
+    _unregisterKeybindings() {
+        for (const key of this._boundKeys) {
+            Main.wm.removeKeybinding(key);
+        }
+        this._boundKeys = [];
+        this._settings = null;
     }
 
     /** @param {object} msg */

@@ -29,6 +29,7 @@ from app.ui.inspector_view import InspectorView
 from app.ui.install_dialog import InstallDialog
 from app.ui.log_viewer import LogViewerView
 from app.ui.profiler_view import ProfilerView
+from app.ui.shortcuts_dialog import build_shortcuts_dialog
 
 APP_ID = "io.github.todevelopers.GseProfiler"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -143,6 +144,16 @@ class MainWindow(Adw.ApplicationWindow):
         toggle_action.connect("activate", self._on_toggle_sidebar)
         self.add_action(toggle_action)
 
+        select_tab_action = Gio.SimpleAction.new(
+            "select-tab", GLib.VariantType.new("s")
+        )
+        select_tab_action.connect("activate", self._on_select_tab)
+        self.add_action(select_tab_action)
+
+        shortcuts_action = Gio.SimpleAction.new("show-shortcuts", None)
+        shortcuts_action.connect("activate", self._on_show_shortcuts)
+        self.add_action(shortcuts_action)
+
     def _update_bridge_actions(self) -> None:
         installed = self._bridge.is_installed
         self._install_action.set_enabled(not installed)
@@ -193,9 +204,17 @@ class MainWindow(Adw.ApplicationWindow):
         content_header.set_title_widget(switcher)
         content_header.pack_start(self._sidebar_toggle_btn)
 
+        # Toast overlay wraps the tab stack so global-shortcut feedback
+        # (e.g. "Profiling started") can surface from any tab.
+        self._toast_overlay = Adw.ToastOverlay()
+        self._toast_overlay.set_child(self._view_stack)
+
+        self._profiler_view.connect("show-toast", self._on_profiler_toast)
+        self._profiler_view.connect("request-attention", self._on_profiler_attention)
+
         content_toolbar = Adw.ToolbarView()
         content_toolbar.add_top_bar(content_header)
-        content_toolbar.set_content(self._view_stack)
+        content_toolbar.set_content(self._toast_overlay)
 
         # ── Sidebar (extension list) ───────────────────────────────────────
         self._ext_list = ExtensionListView(self._dbus, self._installer)
@@ -212,6 +231,7 @@ class MainWindow(Adw.ApplicationWindow):
         section.append("Uninstall Bridge", "win.uninstall-bridge")
         menu.append_section("Bridge Extension", section)
         about_section = Gio.Menu()
+        about_section.append("Keyboard Shortcuts", "win.show-shortcuts")
         about_section.append("About GSE Profiler", "app.about")
         menu.append_section(None, about_section)
 
@@ -319,6 +339,24 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_toggle_sidebar(self, _action: Gio.SimpleAction, _param: object) -> None:
         self._sidebar_toggle_btn.set_active(not self._sidebar_toggle_btn.get_active())
+
+    # ── Tab selection / shortcuts help ─────────────────────────────────────
+
+    def _on_select_tab(self, _action: Gio.SimpleAction, param: GLib.Variant) -> None:
+        self._view_stack.set_visible_child_name(param.get_string())
+
+    def _on_show_shortcuts(self, _action: Gio.SimpleAction, _param: object) -> None:
+        build_shortcuts_dialog().present(self)
+
+    # ── Global-shortcut feedback (from ProfilerView) ───────────────────────
+
+    def _on_profiler_toast(self, _view: ProfilerView, message: str) -> None:
+        self._toast_overlay.add_toast(Adw.Toast.new(message))
+
+    def _on_profiler_attention(self, _view: ProfilerView) -> None:
+        # A global profiling shortcut fired — bring the Profiler tab forward
+        # so the recording state is visible.
+        self._view_stack.set_visible_child_name("profiler")
 
     def _on_sidebar_btn_toggled(self, btn: Gtk.ToggleButton) -> None:
         if btn.get_active():
@@ -430,9 +468,22 @@ class Application(Adw.Application):
             ego_installer=self._ego_installer,
         )
         self.set_accels_for_action("win.toggle-sidebar", ["F9"])
+        self.set_accels_for_action("win.select-tab::details", ["<Control>1"])
+        self.set_accels_for_action("win.select-tab::profiler", ["<Control>2"])
+        self.set_accels_for_action("win.select-tab::inspector", ["<Control>3"])
+        self.set_accels_for_action("win.select-tab::logs", ["<Control>4"])
+        self.set_accels_for_action(
+            "win.show-shortcuts", ["<Control>question", "F1"]
+        )
+        self.set_accels_for_action("app.quit", ["<Control>q"])
+
         about_action = Gio.SimpleAction.new("about", None)
         about_action.connect("activate", self._on_about)
         self.add_action(about_action)
+
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_: self.quit())
+        self.add_action(quit_action)
         self._win.present()
         self._bootstrap_handler = self._dbus_client.connect(
             "extensions-changed", self._on_ready_for_bootstrap

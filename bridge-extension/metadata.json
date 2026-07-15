@@ -11,5 +11,6 @@
     "50"
   ],
   "url": "https://github.com/todevelopers/gse-profiler",
-  "bundle-hash": "12d8a1be0bbcbdd630a549d6f176c9703c7b5d790d35bdaa9d4a8515ac95bae6"
+  "settings-schema": "org.gnome.shell.extensions.gse-profiler-bridge",
+  "bundle-hash": "24c02fddf1f23cb650354c3b953a235f292685d46c1efd3aeefb3dd8f726863e"
 }
