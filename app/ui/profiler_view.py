@@ -134,6 +134,13 @@ class FunctionStat(GObject.Object):
 class ProfilerView(Gtk.Stack):
     """Live function timing profiler with three switchable timeline modes."""
 
+    # Emitted when a global (bridge) keyboard shortcut drives profiling, so the
+    # main window can surface a toast and bring the Profiler tab forward.
+    __gsignals__ = {
+        "show-toast": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        "request-attention": (GObject.SignalFlags.RUN_FIRST, None, ()),
+    }
+
     def __init__(self, dbus_client: DBusClient, socket_server: SocketServer) -> None:
         super().__init__()
         self._dbus = dbus_client
@@ -226,12 +233,22 @@ class ProfilerView(Gtk.Stack):
 
         content.append(self._build_toolbar())
 
+        # Tab-scoped shortcuts. MANAGED scope + Gtk.Stack unmapping the hidden
+        # pages means these are only live while the Profiler tab is selected.
         shortcut_ctrl = Gtk.ShortcutController()
         shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
-        shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
-            Gtk.KeyvalTrigger.new(Gdk.KEY_s, Gdk.ModifierType.CONTROL_MASK),
-            Gtk.CallbackAction.new(self._on_save_shortcut),
-        ))
+        ctrl = Gdk.ModifierType.CONTROL_MASK
+        for keyval, cb in (
+            (Gdk.KEY_s, self._on_save_shortcut),
+            (Gdk.KEY_o, self._on_load_shortcut),
+            (Gdk.KEY_l, self._on_clear_shortcut),
+            (Gdk.KEY_f, self._on_filter_shortcut),
+            (Gdk.KEY_r, self._on_run_shortcut),
+        ):
+            shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
+                Gtk.KeyvalTrigger.new(keyval, ctrl),
+                Gtk.CallbackAction.new(cb),
+            ))
         self.add_controller(shortcut_ctrl)
 
         # Sub-stack: empty placeholder vs. populated dashboard
@@ -918,20 +935,66 @@ class ProfilerView(Gtk.Stack):
 
     def _on_start_stop(self, _btn: Gtk.Button) -> None:
         if self._profiling:
-            self._socket.send({"type": "stop_profiling"})
-            self._set_stopped()
+            self._stop_profiling()
         else:
-            uuid = self._target_uuid
-            _log.debug("Start clicked — uuid=%r connected=%s", uuid, self._socket.is_client_connected)
-            if not uuid:
-                _log.warning("Start clicked but no target extension set")
-                return
-            self._socket.send({"type": "start_profiling", "uuid": uuid})
-            self._profiling = True
-            self._rec_start_ts = GLib.get_monotonic_time() / 1e6
-            self._start_rec_timer()
-            self._set_start_stop_state(running=True)
-            self._update_recording_pill()
+            self._start_profiling()
+
+    def _start_profiling(self) -> bool:
+        """Begin profiling the current target. Returns True if it started."""
+        uuid = self._target_uuid
+        _log.debug("Start — uuid=%r connected=%s", uuid, self._socket.is_client_connected)
+        if not uuid:
+            _log.warning("Start requested but no target extension set")
+            return False
+        self._socket.send({"type": "start_profiling", "uuid": uuid})
+        self._profiling = True
+        self._rec_start_ts = GLib.get_monotonic_time() / 1e6
+        self._start_rec_timer()
+        self._set_start_stop_state(running=True)
+        self._update_recording_pill()
+        return True
+
+    def _stop_profiling(self) -> None:
+        self._socket.send({"type": "stop_profiling"})
+        self._set_stopped()
+
+    # ── Global (bridge) shortcut handlers ─────────────────────────────────
+
+    def _handle_global_toggle(self) -> None:
+        """Start/stop from the global Super+F9 shortcut (app may be unfocused)."""
+        self.emit("request-attention")
+        if self._profiling:
+            self._stop_profiling()
+            self.emit("show-toast", "Profiling stopped (keyboard shortcut)")
+        elif self._can_start_profiling():
+            self._start_profiling()
+            self.emit("show-toast", "Profiling started (keyboard shortcut)")
+        else:
+            self.emit("show-toast", "Select an enabled extension to start profiling")
+
+    def _handle_global_restart(self) -> None:
+        """Stop → clear → start from the global Super+Shift+F9 shortcut."""
+        self.emit("request-attention")
+        if self._profiling:
+            self._stop_profiling()
+        self._clear_data()
+        self._file_label.set_text("")
+        self._file_label.set_tooltip_text("")
+        self._flush_refresh()
+        self._update_visible_child()
+        if self._can_start_profiling():
+            self._start_profiling()
+            self.emit("show-toast", "Profiling restarted (keyboard shortcut)")
+        else:
+            self.emit("show-toast", "Select an enabled extension to start profiling")
+
+    def _can_start_profiling(self) -> bool:
+        uuid = self._target_uuid
+        return (
+            uuid is not None
+            and self._dbus.get_extension_state(uuid) == ExtensionState.ENABLED
+            and self._socket.is_client_connected
+        )
 
     def _set_stopped(self) -> None:
         self._profiling = False
@@ -990,6 +1053,26 @@ class ProfilerView(Gtk.Stack):
     def _on_save_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
         if self._save_btn.get_sensitive():
             self._on_save(None)
+        return True
+
+    def _on_load_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        if self._load_btn.get_sensitive():
+            self._on_load(None)
+        return True
+
+    def _on_clear_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        if self._clear_btn.get_sensitive():
+            self._on_clear(None)
+        return True
+
+    def _on_filter_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        if self.get_visible_child_name() == "content":
+            self._filter_entry.grab_focus()
+        return True
+
+    def _on_run_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        if self._start_stop_btn.get_sensitive():
+            self._on_start_stop(None)
         return True
 
     def _default_profile_basename(self) -> str:
@@ -1179,6 +1262,12 @@ class ProfilerView(Gtk.Stack):
         elif msg_type == "profiling_stopped":
             _log.debug("profiling_stopped received")
             self._set_stopped()
+        elif msg_type == "toggle_profiling":
+            _log.debug("toggle_profiling received (global shortcut)")
+            self._handle_global_toggle()
+        elif msg_type == "restart_profiling":
+            _log.debug("restart_profiling received (global shortcut)")
+            self._handle_global_restart()
         else:
             _log.debug("message received from bridge: type=%s", msg_type)
 

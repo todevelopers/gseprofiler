@@ -34,6 +34,32 @@ properties, values and nested objects while it runs.
 
 ---
 
+## Keyboard Shortcuts
+
+The two **global** shortcuts are handled inside `gnome-shell` by the bridge, so
+they work even when the GSE Profiler window is not focused — handy while you
+click around in the extension you're profiling. All other shortcuts are
+scoped to the currently selected tab. The full list is available in-app from
+the menu → **Keyboard Shortcuts** (or `Ctrl+?`).
+
+| Shortcut          | Action                                              | Scope   |
+| ----------------- | --------------------------------------------------- | ------- |
+| `Super+F9`        | Toggle profiling (start / stop)                     | global  |
+| `Super+Shift+F9`  | Restart profiling (stop, clear, start)              | global  |
+| `Ctrl+1…4`        | Switch tab (Details / Profiler / Inspector / Logs)  | window  |
+| `F9`              | Toggle the extension sidebar                         | window  |
+| `Ctrl+?` / `F1`   | Show the keyboard-shortcuts dialog                   | window  |
+| `Ctrl+R`          | Primary action of the tab (start-stop / refresh)    | tab     |
+| `Ctrl+F`          | Focus the filter / search field                      | tab     |
+| `Ctrl+S`          | Save profile / export log                            | tab     |
+| `Ctrl+O`          | Load a saved profile (Profiler)                      | tab     |
+| `Ctrl+L`          | Clear profiling data / log                           | tab     |
+
+The global shortcuts register only after the bridge extension is installed and
+GNOME Shell has reloaded (the usual log out / back in).
+
+---
+
 ## How It Works
 
 <p align="center">

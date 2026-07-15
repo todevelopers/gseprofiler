@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import gi
@@ -188,7 +189,30 @@ class BridgeManager:
             _log.error("Bridge install failed: %s", exc)
             _show_error(parent_window, str(exc))
             return
+        self._compile_schemas()
         self._prompt_restart(parent_window)
+
+    def _compile_schemas(self) -> None:
+        """Compile the bridge's GSettings schema so the global-shortcut
+        keybindings can be registered. A missing or failed compile only
+        disables the global shortcuts — the bridge itself still works, so this
+        never blocks installation."""
+        schema_dir = _INSTALL_PATH / "schemas"
+        if not schema_dir.is_dir():
+            return
+        try:
+            subprocess.run(
+                ["glib-compile-schemas", str(schema_dir)],
+                capture_output=True, check=True, text=True,
+            )
+            _log.info("Compiled bridge GSettings schema in %s", schema_dir)
+        except FileNotFoundError:
+            _log.warning(
+                "glib-compile-schemas not found — global keyboard shortcuts "
+                "will be unavailable until the schema is compiled."
+            )
+        except subprocess.CalledProcessError as exc:
+            _log.warning("Failed to compile bridge schema: %s", exc.stderr)
 
     def _prompt_restart(self, parent_window: Gtk.Window | None, *, uninstall: bool = False) -> None:
         action = "removed" if uninstall else "installed"

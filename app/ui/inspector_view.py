@@ -3,12 +3,13 @@ from typing import Any
 import gi
 
 gi.require_version("Adw", "1")
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("GObject", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
-from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient, ExtensionState
 from app.core.socket_server import SocketServer
@@ -208,6 +209,16 @@ class InspectorView(Gtk.Stack):
         content.append(toolbar)
         content.append(self._breadcrumb_revealer)
         content.append(self._stack)
+
+        # Tab-scoped shortcut. MANAGED scope + Gtk.Stack unmapping the hidden
+        # pages means this is only live while the Inspector tab is selected.
+        shortcut_ctrl = Gtk.ShortcutController()
+        shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+        shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
+            Gtk.KeyvalTrigger.new(Gdk.KEY_r, Gdk.ModifierType.CONTROL_MASK),
+            Gtk.CallbackAction.new(self._on_refresh_shortcut),
+        ))
+        self.add_controller(shortcut_ctrl)
 
     # ── Name column factory ────────────────────────────────────────────────
 
@@ -494,6 +505,11 @@ class InspectorView(Gtk.Stack):
             return
         self._socket.send({"type": "inspect", "uuid": uuid, "path": self._current_path})
         self._status_lbl.set_label("Refreshing…")
+
+    def _on_refresh_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        if self.get_visible_child_name() == "content":
+            self._on_refresh(None)
+        return True
 
     def _on_copy(self, _btn: Gtk.Button) -> None:
         pos = self._selection.get_selected()

@@ -505,12 +505,21 @@ class LogViewerView(Gtk.Box):
         self.append(status_bar)
         self.append(self._list_stack)
 
+        # Tab-scoped shortcuts. MANAGED scope + Gtk.Stack unmapping the hidden
+        # pages means these are only live while the Logs tab is selected.
         shortcut_ctrl = Gtk.ShortcutController()
         shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
-        shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
-            Gtk.KeyvalTrigger.new(Gdk.KEY_s, Gdk.ModifierType.CONTROL_MASK),
-            Gtk.CallbackAction.new(self._on_export_shortcut),
-        ))
+        ctrl = Gdk.ModifierType.CONTROL_MASK
+        for keyval, cb in (
+            (Gdk.KEY_s, self._on_export_shortcut),
+            (Gdk.KEY_r, self._on_run_shortcut),
+            (Gdk.KEY_f, self._on_search_shortcut),
+            (Gdk.KEY_l, self._on_clear_shortcut),
+        ):
+            shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
+                Gtk.KeyvalTrigger.new(keyval, ctrl),
+                Gtk.CallbackAction.new(cb),
+            ))
         self.add_controller(shortcut_ctrl)
 
         self._update_status_label()
@@ -1255,6 +1264,18 @@ class LogViewerView(Gtk.Box):
 
     def _on_export_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
         self._on_export(None)
+        return True
+
+    def _on_run_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        self._on_start_stop(None)
+        return True
+
+    def _on_search_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        self._search_entry.grab_focus()
+        return True
+
+    def _on_clear_shortcut(self, _widget: Gtk.Widget, _args: object) -> bool:
+        self._on_clear(None)
         return True
 
     def _on_export(self, _btn: Gtk.Button) -> None:
