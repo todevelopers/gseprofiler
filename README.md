@@ -44,8 +44,8 @@ the menu → **Keyboard Shortcuts** (or `Ctrl+?`).
 
 | Shortcut          | Action                                              | Scope   |
 | ----------------- | --------------------------------------------------- | ------- |
-| `Super+F9`        | Toggle profiling (start / stop)                     | global  |
-| `Super+Shift+F9`  | Restart profiling (stop, clear, start)              | global  |
+| `Super+F5`        | Toggle profiling (start / stop)                     | global  |
+| `Super+Shift+F5`  | Restart profiling (stop, clear, start)              | global  |
 | `Ctrl+1…4`        | Switch tab (Details / Profiler / Inspector / Logs)  | window  |
 | `F9`              | Toggle the extension sidebar                         | window  |
 | `Ctrl+?` / `F1`   | Show the keyboard-shortcuts dialog                   | window  |

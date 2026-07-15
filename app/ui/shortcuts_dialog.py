@@ -18,8 +18,8 @@ _SHORTCUTS: list[tuple[str, str | None, list[tuple[str, str]]]] = [
         "Global",
         "Work even when the GSE Profiler window is not focused.",
         [
-            ("Super+F9", "Toggle profiling (start / stop)"),
-            ("Super+Shift+F9", "Restart profiling (stop, clear, start)"),
+            ("Super+F5", "Toggle profiling (start / stop)"),
+            ("Super+Shift+F5", "Restart profiling (stop, clear, start)"),
         ],
     ),
     (
@@ -67,7 +67,7 @@ _SHORTCUTS: list[tuple[str, str | None, list[tuple[str, str]]]] = [
 
 
 def _keycaps(accel: str) -> Gtk.Widget:
-    """Render an accelerator like ``Ctrl+Shift+F9`` as a row of keycaps."""
+    """Render an accelerator like ``Super+Shift+F5`` as a row of keycaps."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
     box.set_valign(Gtk.Align.CENTER)
     keys = accel.split("+")

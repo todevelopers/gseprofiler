@@ -382,8 +382,8 @@ original toggle-only design.
 
 - [x] Add a GSettings schema to the bridge extension (`schemas/org.gnome.shell.extensions.gse-profiler-bridge.gschema.xml`)
   
-  - Key: `toggle-profiling` — type `as`, default `['<Super>F9']`
-  - Key: `restart-profiling` — type `as`, default `['<Super><Shift>F9']`
+  - Key: `toggle-profiling` — type `as`, default `['<Super>F5']`
+  - Key: `restart-profiling` — type `as`, default `['<Super><Shift>F5']`
   - Compiled with `glib-compile-schemas` on bridge install (`BridgeManager._compile_schemas`)
 
 - [x] In `extension.js` `enable()`: register keybindings via `Main.wm.addKeybinding()` (registration wrapped in try/catch so an uncompiled schema disables the shortcuts without breaking the bridge)
@@ -419,7 +419,7 @@ original toggle-only design.
 
 ### Notes
 
-- Defaults `<Super>F9` / `<Super><Shift>F9` avoid conflicts with common app shortcuts; document them in the README
+- Defaults `<Super>F5` / `<Super><Shift>F5` avoid conflicts with common app shortcuts (and with the bare `F9` sidebar toggle); document them in the README
 - On Wayland this requires `gnome-shell` 45+ (Mutter API stable); the bridge already targets shell 46+
 - User must restart the bridge (or log out/in) after installing the schema for the global shortcuts to register
 
