@@ -22,6 +22,7 @@ from app.core.ego_client import EgoClient
 from app.core.ego_installer import EgoInstaller
 from app.core.github_installer import GitHubInstaller
 from app.core.keybindings import CATALOG, KeybindingManager
+from app.core.message_router import MessageRouter
 from app.core.socket_server import SocketServer
 from app.core.source_registry import SourceRegistry
 from app.ui.details_view import DetailsView
@@ -470,6 +471,9 @@ class Application(Adw.Application):
         self._installer = GitHubInstaller(self._registry)
         self._ego_installer = EgoInstaller(self._registry, EgoClient())
         self._keybindings = KeybindingManager()
+        # Typed dispatch over the bridge socket's message stream.
+        self._router = MessageRouter(self._socket_server)
+        self._router.on("keybindings", self._on_keybindings_message)
         self._win: MainWindow | None = None
         self._bootstrap_handler: int = 0
         self._update_check_handler: int = 0
@@ -480,7 +484,6 @@ class Application(Adw.Application):
         self._socket_server.connect(
             "client-disconnected", self._on_bridge_socket_disconnected
         )
-        self._socket_server.connect("message-received", self._on_bridge_socket_message)
         self._socket_server.start()
         self._win = MainWindow(
             application=self,
@@ -545,6 +548,7 @@ class Application(Adw.Application):
         window.present()
 
     def do_shutdown(self) -> None:
+        self._router.shutdown()
         self._bridge.deactivate()
         self._socket_server.stop()
         Adw.Application.do_shutdown(self)
@@ -585,9 +589,7 @@ class Application(Adw.Application):
     def _on_bridge_socket_disconnected(self, _server: SocketServer) -> None:
         self._keybindings.set_global_available(False)
 
-    def _on_bridge_socket_message(self, _server: SocketServer, msg: dict[str, Any]) -> None:
-        if msg.get("type") != "keybindings":
-            return
+    def _on_keybindings_message(self, msg: dict[str, Any]) -> None:
         bindings = msg.get("bindings")
         if isinstance(bindings, dict):
             self._keybindings.update_global_from_bridge(bindings)

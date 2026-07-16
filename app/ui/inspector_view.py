@@ -13,6 +13,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient, ExtensionState
 from app.core.keybindings import KeybindingManager, populate_shortcut_controller
+from app.core.message_router import MessageRouter
 from app.core.socket_server import SocketServer
 
 _INVALID_POS = GLib.MAXUINT
@@ -80,8 +81,12 @@ class InspectorView(Gtk.Stack):
         self._item_positions: dict[int, int] = {}
         self._build_ui()
 
+        # Bridge messages are routed by type through a MessageRouter instead of
+        # a per-view type filter (see app/core/message_router.py).
+        self._router = MessageRouter(socket_server)
+        self._router.on("inspect_result", self._on_inspect_result)
+
         self._signal_ids: list[tuple[GObject.Object, int]] = [
-            (socket_server, socket_server.connect("message-received", self._on_message)),
             (socket_server, socket_server.connect("client-connected", self._on_client_connected)),
             (socket_server, socket_server.connect("client-disconnected", self._on_disconnected)),
             (dbus_client, dbus_client.connect("extensions-changed", self._on_extensions_changed)),
@@ -90,6 +95,7 @@ class InspectorView(Gtk.Stack):
         self.connect("destroy", self._on_destroy)
 
     def _on_destroy(self, _widget: Gtk.Widget) -> None:
+        self._router.shutdown()
         for obj, sig_id in self._signal_ids:
             obj.disconnect(sig_id)
         self._signal_ids.clear()
@@ -553,10 +559,6 @@ class InspectorView(Gtk.Stack):
             self._navigate_to(self._current_path + [item.name])
 
     # ── Socket message handling ────────────────────────────────────────────
-
-    def _on_message(self, _server: SocketServer, msg: dict[str, Any]) -> None:
-        if msg.get("type") == "inspect_result":
-            self._on_inspect_result(msg)
 
     def _on_inspect_result(self, msg: dict[str, Any]) -> None:
         if msg.get("extensionUuid") != self._current_uuid:

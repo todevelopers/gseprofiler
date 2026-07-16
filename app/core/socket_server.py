@@ -87,6 +87,19 @@ class SocketServer(GObject.Object):
         if self._cancellable:
             self._cancellable.cancel()
 
+    def _reset_connection(self) -> None:
+        """Drop all per-connection state (streams, queue, write flag).
+
+        Shared by the read-error path, the EOF path and ``stop()`` — they all
+        need to release the same handles. Does not emit ``client-disconnected``
+        or touch the listening service; the callers decide those.
+        """
+        self._connection = None
+        self._output = None
+        self._istream = None
+        self._send_queue.clear()
+        self._writing = False
+
     def stop(self) -> None:
         """Stop the server and close all connections."""
         if self._cancellable:
@@ -96,11 +109,7 @@ class SocketServer(GObject.Object):
             self._service.stop()
             self._service.close()
             self._service = None
-        self._connection = None
-        self._output = None
-        self._istream = None
-        self._send_queue.clear()
-        self._writing = False
+        self._reset_connection()
         _unlink_socket(_socket_path())
 
     def send(self, message: dict[str, Any]) -> None:
@@ -201,21 +210,13 @@ class SocketServer(GObject.Object):
                 _log.debug("Socket read cancelled")
             else:
                 _log.info("Bridge read error: %s", exc)
-            self._connection = None
-            self._output = None
-            self._istream = None
-            self._send_queue.clear()
-            self._writing = False
+            self._reset_connection()
             self.emit("client-disconnected")
             return
 
         if line_bytes is None:
             _log.info("Bridge disconnected (EOF)")
-            self._connection = None
-            self._output = None
-            self._istream = None
-            self._send_queue.clear()
-            self._writing = False
+            self._reset_connection()
             self.emit("client-disconnected")
             return
 

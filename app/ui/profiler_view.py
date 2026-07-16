@@ -3,8 +3,7 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import gi
 
@@ -18,6 +17,8 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 from app.core.dbus_client import DBusClient, ExtensionState
 from app.core.exporters import to_speedscope, to_trace_event
 from app.core.keybindings import KeybindingManager, populate_shortcut_controller
+from app.core.message_router import MessageRouter
+from app.core.settings import Settings
 from app.core.socket_server import SocketServer
 from app.ui.profiler import desaturate_color
 from app.ui.profiler.flamegraph import FlamegraphView
@@ -68,36 +69,6 @@ _FN_HINT = (
 
 
 _MAX_RAW_EVENTS = 50_000
-
-
-def _settings_path() -> Path:
-    return Path(GLib.get_user_config_dir()) / "gse-profiler" / "profiler.json"
-
-
-def _load_settings() -> dict[str, Any]:
-    p = _settings_path()
-    if p.exists():
-        try:
-            return cast(dict[str, Any], json.loads(p.read_text(encoding="utf-8")))
-        except Exception as exc:
-            _log.warning("Failed to load settings from %s: %s", p, exc)
-    return {}
-
-
-def _save_settings(data: dict[str, Any]) -> None:
-    p = _settings_path()
-    existing: dict[str, Any] = {}
-    if p.exists():
-        try:
-            existing = cast(dict[str, Any], json.loads(p.read_text(encoding="utf-8")))
-        except Exception as exc:
-            _log.warning("Failed to load settings from %s: %s", p, exc)
-    existing.update(data)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        p.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    except OSError as exc:
-        _log.error("Failed to save settings to %s: %s", p, exc)
 
 
 def _fmt_ms(v: float) -> str:
@@ -167,7 +138,8 @@ class ProfilerView(Gtk.Stack):
         self._rec_start_ts: float | None = None
         self._rec_timer_id: int = 0
 
-        settings = _load_settings()
+        self._settings = Settings("profiler")
+        settings = self._settings.load()
         mode = settings.get("mode", _DEFAULT_MODE)
         self._mode: str = mode if mode in _MODES else _DEFAULT_MODE
         self._hide_idle: bool = bool(settings.get("hide_idle", False))
@@ -180,8 +152,16 @@ class ProfilerView(Gtk.Stack):
 
         self._build_ui()
 
+        # Bridge messages are routed by type through a MessageRouter instead of
+        # a per-view type filter (see app/core/message_router.py).
+        self._router = MessageRouter(socket_server)
+        self._router.on("profile_event", self._on_profile_event)
+        self._router.on("profiling_started", self._on_profiling_started)
+        self._router.on("profiling_stopped", self._on_profiling_stopped)
+        self._router.on("toggle_profiling", self._on_toggle_profiling)
+        self._router.on("restart_profiling", self._on_restart_profiling)
+
         self._signal_ids: list[tuple[GObject.Object, int]] = [
-            (socket_server, socket_server.connect("message-received", self._on_message)),
             (socket_server, socket_server.connect("client-connected", self._on_client_connected)),
             (socket_server, socket_server.connect("client-disconnected", self._on_client_disconnected)),
             (dbus_client, dbus_client.connect("extensions-changed", self._on_extensions_changed)),
@@ -190,6 +170,7 @@ class ProfilerView(Gtk.Stack):
         self.connect("destroy", self._on_destroy)
 
     def _on_destroy(self, _widget: Gtk.Widget) -> None:
+        self._router.shutdown()
         for obj, sig_id in self._signal_ids:
             obj.disconnect(sig_id)
         self._signal_ids.clear()
@@ -645,14 +626,14 @@ class ProfilerView(Gtk.Stack):
         self._mode = mode
         self._tl_stack.set_visible_child_name(mode)
         self._info_icon.set_tooltip_text(_MODE_HINTS[mode])
-        _save_settings({"mode": mode})
+        self._settings.set("mode", mode)
         self._update_active_graph()
 
     def _on_show_gaps_toggled(self, btn: Gtk.ToggleButton) -> None:
         show = not btn.get_active()  # active=True means gaps are hidden
         self._flamegraph.set_show_gaps(show)
         self._swimlane.set_show_gaps(show)
-        _save_settings({"hide_idle": btn.get_active()})
+        self._settings.set("hide_idle", btn.get_active())
 
     # ── Paned position persistence ────────────────────────────────────────
 
@@ -671,7 +652,7 @@ class ProfilerView(Gtk.Stack):
         self._paned_save_id = GLib.timeout_add(400, self._do_save_paned_pos)
 
     def _do_save_paned_pos(self) -> bool:
-        _save_settings({"paned_pos": self._paned.get_position()})
+        self._settings.set("paned_pos", self._paned.get_position())
         self._paned_save_id = 0
         return bool(GLib.SOURCE_REMOVE)
 
@@ -995,7 +976,7 @@ class ProfilerView(Gtk.Stack):
         ``startProfiling()`` unpatches and re-patches when already running, so a
         lone start_profiling restarts it cleanly in one round-trip. An extra
         stop would only emit a late profiling_stopped ack that races the new
-        session (see :meth:`_on_message`).
+        session (see :meth:`_on_profiling_stopped`).
 
         Data is cleared only when profiling can actually be restarted — never
         wipe a recorded session if there is nothing to restart into (no target,
@@ -1268,44 +1249,44 @@ class ProfilerView(Gtk.Stack):
 
     # ── Socket handlers ───────────────────────────────────────────────────
 
-    def _on_message(self, _server: SocketServer, msg: dict[str, Any]) -> None:
-        msg_type = msg.get("type")
-        if msg_type == "profile_event":
-            _log.debug(
-                "profile_event: fn=%s dur=%.3fms",
-                msg.get("function"),
-                (msg.get("end", 0) - msg.get("start", 0)) * 1000,
+    def _on_profile_event(self, msg: dict[str, Any]) -> None:
+        _log.debug(
+            "profile_event: fn=%s dur=%.3fms",
+            msg.get("function"),
+            (msg.get("end", 0) - msg.get("start", 0)) * 1000,
+        )
+        self._ingest_event(msg)
+
+    def _on_profiling_started(self, msg: dict[str, Any]) -> None:
+        _log.info("profiling_started: uuid=%s ok=%s", msg.get("uuid"), msg.get("ok"))
+        if not msg.get("ok"):
+            _log.warning(
+                "Bridge could not find stateObj for %s — no functions patched",
+                msg.get("uuid"),
             )
-            self._ingest_event(msg)
-        elif msg_type == "profiling_started":
-            _log.info("profiling_started: uuid=%s ok=%s", msg.get("uuid"), msg.get("ok"))
-            if not msg.get("ok"):
-                _log.warning(
-                    "Bridge could not find stateObj for %s — no functions patched",
-                    msg.get("uuid"),
-                )
-                self._set_stopped()
-        elif msg_type == "profiling_stopped":
-            # Direct ack to a stop_profiling we sent (target change, extension
-            # disabled, socket teardown, or an explicit stop). The UI already
-            # transitioned to stopped locally at send time, so this ack is
-            # purely confirmatory. If the user has since started a new session,
-            # _profiling is True again and this late ack is stale — acting on it
-            # would tear down the running session's recording pill while the
-            # bridge keeps profiling. The bridge only ever emits this in
-            # response to our own stop, so _profiling=True here always means a
-            # newer start superseded it.
-            _log.debug("profiling_stopped received (profiling=%s)", self._profiling)
-            if not self._profiling:
-                self._set_stopped()
-        elif msg_type == "toggle_profiling":
-            _log.debug("toggle_profiling received (global shortcut)")
-            self._handle_global_toggle()
-        elif msg_type == "restart_profiling":
-            _log.debug("restart_profiling received (global shortcut)")
-            self._handle_global_restart()
-        else:
-            _log.debug("message received from bridge: type=%s", msg_type)
+            self._set_stopped()
+
+    def _on_profiling_stopped(self, _msg: dict[str, Any]) -> None:
+        # Direct ack to a stop_profiling we sent (target change, extension
+        # disabled, socket teardown, or an explicit stop). The UI already
+        # transitioned to stopped locally at send time, so this ack is
+        # purely confirmatory. If the user has since started a new session,
+        # _profiling is True again and this late ack is stale — acting on it
+        # would tear down the running session's recording pill while the
+        # bridge keeps profiling. The bridge only ever emits this in
+        # response to our own stop, so _profiling=True here always means a
+        # newer start superseded it.
+        _log.debug("profiling_stopped received (profiling=%s)", self._profiling)
+        if not self._profiling:
+            self._set_stopped()
+
+    def _on_toggle_profiling(self, _msg: dict[str, Any]) -> None:
+        _log.debug("toggle_profiling received (global shortcut)")
+        self._handle_global_toggle()
+
+    def _on_restart_profiling(self, _msg: dict[str, Any]) -> None:
+        _log.debug("restart_profiling received (global shortcut)")
+        self._handle_global_restart()
 
     def _on_client_connected(self, _server: SocketServer) -> None:
         self._update_visible_child()

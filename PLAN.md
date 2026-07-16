@@ -459,12 +459,12 @@ the same socket pipeline.
 
 **Goal:** Pay down structural debt before phases 7 / 11 / 12 grow the codebase further.
 
-- [ ] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`, mirroring the `app/ui/profiler/` split — natural seams: capture panel, tag bar + chip fitting, list-view factories, main view
-- [ ] Unify settings persistence — `_settings_path` / `_load_settings` / `_save_settings` are duplicated in `profiler_view.py` and `log_viewer.py` with diverging merge semantics → single `app/core/settings.py` (becomes the seam for the Phase 9 GSettings backend)
-- [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the Flatpak manifest and the Phase 10 RPM spec)
-- [ ] `socket_server.py` — extract `_reset_connection()`; the connection-teardown block is copy-pasted 3× (error path, EOF path, `stop()`)
-- [ ] Typed message router — replace per-view `message-received` filtering with `router.on("profile_event", cb)`-style registration before phases 7 / 11 / 12 add more message types
-- [ ] Delete `tests/test_placeholder.py` (Phase 0 leftover)
+- [x] Split `app/ui/log_viewer.py` (~1450 lines) into a package `app/ui/log_viewer/`, mirroring the `app/ui/profiler/` split — `common.py` (constants/helpers/`LogRowItem`), `factories.py` (column cell factories), `tag_bar.py` (`_TagBarLayout` + `TagBarMixin` chip fitting), `capture_panel.py` (`CapturePanelMixin`), `view.py` (`LogViewerView` composing them)
+- [x] Unify settings persistence — replaced the duplicated `_settings_path` / `_load_settings` / `_save_settings` in `profiler_view.py` and `log_viewer.py` with a single `app/core/settings.py` `Settings` class (merge semantics; per-namespace files; the seam for the Phase 9 GSettings backend)
+- [ ] Proper Python packaging — add a `[project]` table + `console_scripts` entry point to `pyproject.toml`, drop the `sys.path.insert` hack in `main.py` (also simplifies the Flatpak manifest and the Phase 10 RPM spec) — **deferred**: all 3 launch paths (setup-and-run.sh, build-deb.sh, Flatpak) run `app/main.py` directly, so dropping the hack needs launcher/manifest changes that must be build-tested on a real Linux box
+- [x] `socket_server.py` — extracted `_reset_connection()`; the connection-teardown block was copy-pasted 3× (error path, EOF path, `stop()`)
+- [x] Typed message router — added `app/core/message_router.py` (`MessageRouter.on(type, cb)`); replaced the per-view `message-received` if/elif filtering in `profiler_view.py`, `inspector_view.py` and `main.py`
+- [x] Delete `tests/test_placeholder.py` (Phase 0 leftover)
 
 ---
 
@@ -557,7 +557,7 @@ the same socket pipeline.
 | 12    | Startup profiling    | Profile enable() ramp-up (V2+)                             | planned                |
 | 13    | Global shortcuts     | Toggle/restart profiling via keybinding + in-app shortcuts | done (rebind deferred) |
 | 14    | Bridge hardening     | Bug fixes, batching, async profiling                       | planned                |
-| 15    | Refactoring pass     | log_viewer split, settings, packaging                      | planned                |
+| 15    | Refactoring pass     | log_viewer split, settings, packaging                      | 5/6 done (packaging deferred) |
 | 16    | Export & analysis    | speedscope, merged flame graph                             | planned                |
 | 17    | EGO install          | Install from extensions.gnome.org                          | ✅ done                 |
 | —     | opt-in Developer API | Extension author integration                               | deferred ∞             |
