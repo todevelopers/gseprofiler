@@ -21,6 +21,7 @@ from app.core.dbus_client import DBusClient, ExtensionState
 from app.core.ego_client import EgoClient
 from app.core.ego_installer import EgoInstaller
 from app.core.github_installer import GitHubInstaller
+from app.core.keybindings import CATALOG, KeybindingManager
 from app.core.socket_server import SocketServer
 from app.core.source_registry import SourceRegistry
 from app.ui.details_view import DetailsView
@@ -97,6 +98,7 @@ class MainWindow(Adw.ApplicationWindow):
         bridge: BridgeManager,
         installer: GitHubInstaller,
         ego_installer: EgoInstaller,
+        keybindings: KeybindingManager,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
@@ -105,6 +107,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._bridge = bridge
         self._installer = installer
         self._ego_installer = ego_installer
+        self._keybindings = keybindings
         self._active_uuid: str | None = None
         self._last_extensions: dict[str, Any] = {}
         self._active_toast: Adw.Toast | None = None
@@ -174,9 +177,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._details_view = DetailsView(
             self._dbus, self._installer, self._ego_installer
         )
-        self._profiler_view = ProfilerView(self._dbus, self._socket)
-        self._inspector_view = InspectorView(self._dbus, self._socket)
-        self._logs_view = LogViewerView(self._dbus)
+        self._profiler_view = ProfilerView(self._dbus, self._socket, self._keybindings)
+        self._inspector_view = InspectorView(self._dbus, self._socket, self._keybindings)
+        self._logs_view = LogViewerView(self._dbus, self._keybindings)
 
         # ── ViewStack (tabs) ───────────────────────────────────────────────
         self._view_stack = Adw.ViewStack()
@@ -347,7 +350,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._view_stack.set_visible_child_name(param.get_string())
 
     def _on_show_shortcuts(self, _action: Gio.SimpleAction, _param: object) -> None:
-        build_shortcuts_dialog().present(self)
+        build_shortcuts_dialog(self._keybindings).present(self)
 
     # ── Global-shortcut feedback (from ProfilerView) ───────────────────────
 
@@ -466,12 +469,18 @@ class Application(Adw.Application):
         self._registry = SourceRegistry()
         self._installer = GitHubInstaller(self._registry)
         self._ego_installer = EgoInstaller(self._registry, EgoClient())
+        self._keybindings = KeybindingManager()
         self._win: MainWindow | None = None
         self._bootstrap_handler: int = 0
         self._update_check_handler: int = 0
 
     def _on_activate(self, _app: "Application") -> None:
         self._load_css()
+        self._socket_server.connect("client-connected", self._on_bridge_socket_connected)
+        self._socket_server.connect(
+            "client-disconnected", self._on_bridge_socket_disconnected
+        )
+        self._socket_server.connect("message-received", self._on_bridge_socket_message)
         self._socket_server.start()
         self._win = MainWindow(
             application=self,
@@ -480,16 +489,11 @@ class Application(Adw.Application):
             bridge=self._bridge,
             installer=self._installer,
             ego_installer=self._ego_installer,
+            keybindings=self._keybindings,
         )
-        self.set_accels_for_action("win.toggle-sidebar", ["F9"])
-        self.set_accels_for_action("win.select-tab::details", ["<Control>1"])
-        self.set_accels_for_action("win.select-tab::profiler", ["<Control>2"])
-        self.set_accels_for_action("win.select-tab::inspector", ["<Control>3"])
-        self.set_accels_for_action("win.select-tab::logs", ["<Control>4"])
-        self.set_accels_for_action(
-            "win.show-shortcuts", ["<Control>question", "F1"]
-        )
-        self.set_accels_for_action("app.quit", ["<Control>q"])
+        self._keybindings.connect_changed(self._on_keybindings_changed)
+        self._keybindings.connect_global_edit(self._on_global_edit)
+        self._apply_app_accels()
 
         about_action = Gio.SimpleAction.new("about", None)
         about_action.connect("activate", self._on_about)
@@ -549,6 +553,44 @@ class Application(Adw.Application):
         bridge = extensions.get(BRIDGE_UUID)
         if bridge and bridge["state"] == ExtensionState.DISABLED:
             self._socket_server.disconnect_client()
+
+    # ── Keyboard shortcuts ──────────────────────────────────────────────────
+
+    def _apply_app_accels(self) -> None:
+        """Re-apply every app-kind shortcut's current accelerators. Cheap
+        (a handful of entries) so it is simplest to just redo all of them on
+        any keybindings change rather than track which one changed."""
+        for spec in CATALOG:
+            if spec.kind != "app":
+                continue
+            assert spec.detailed_action is not None
+            self.set_accels_for_action(
+                spec.detailed_action, self._keybindings.get_accels(spec.id)
+            )
+
+    def _on_keybindings_changed(self, _action_id: str) -> None:
+        self._apply_app_accels()
+
+    def _on_global_edit(self, settings_key: str, accels: list[str]) -> None:
+        """Relay a user edit of a global shortcut to the bridge. The app has
+        no direct dconf access in Flatpak, so the bridge (running inside
+        gnome-shell) is the one that actually writes its own GSettings."""
+        self._socket_server.send(
+            {"type": "set_keybinding", "key": settings_key, "accels": accels}
+        )
+
+    def _on_bridge_socket_connected(self, _server: SocketServer) -> None:
+        self._socket_server.send({"type": "get_keybindings"})
+
+    def _on_bridge_socket_disconnected(self, _server: SocketServer) -> None:
+        self._keybindings.set_global_available(False)
+
+    def _on_bridge_socket_message(self, _server: SocketServer, msg: dict[str, Any]) -> None:
+        if msg.get("type") != "keybindings":
+            return
+        bindings = msg.get("bindings")
+        if isinstance(bindings, dict):
+            self._keybindings.update_global_from_bridge(bindings)
 
     def _on_ready_for_bootstrap(self, _dbus: DBusClient, _extensions: dict) -> None:
         self._dbus_client.disconnect(self._bootstrap_handler)

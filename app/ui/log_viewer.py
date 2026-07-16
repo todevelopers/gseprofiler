@@ -17,7 +17,7 @@ gi.require_version("Pango", "1.0")
 from collections import deque
 from collections.abc import Callable
 
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
+from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient
 from app.core.journal_reader import (
@@ -28,6 +28,7 @@ from app.core.journal_reader import (
     capture_from_settings,
     parse_extra_args,
 )
+from app.core.keybindings import KeybindingManager, populate_shortcut_controller
 
 _log = logging.getLogger(__name__)
 
@@ -255,9 +256,10 @@ class _TagBarLayout(Gtk.BoxLayout):
 class LogViewerView(Gtk.Box):
     """Live journalctl log viewer with structured column-view rendering."""
 
-    def __init__(self, dbus_client: DBusClient) -> None:
+    def __init__(self, dbus_client: DBusClient, keybindings: KeybindingManager) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._dbus = dbus_client
+        self._keybindings = keybindings
         self._reader = JournalReader()
         self._entries: deque[LogEntry] = deque(maxlen=MAX_ENTRIES)
 
@@ -304,7 +306,17 @@ class LogViewerView(Gtk.Box):
         self._build_ui()
 
         self._reader.connect("log-entry", self._on_log_entry)
-        self.connect("destroy", lambda _w: self._reader.stop())
+        self._kb_changed_id = self._keybindings.connect_changed(self._on_keybindings_changed)
+        self.connect("destroy", self._on_destroy)
+
+    def _on_destroy(self, _widget: Gtk.Widget) -> None:
+        self._reader.stop()
+        self._keybindings.disconnect(self._kb_changed_id)
+
+    def _on_keybindings_changed(self, _action_id: str) -> None:
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
 
     # ── UI construction ────────────────────────────────────────────────────
 
@@ -507,20 +519,20 @@ class LogViewerView(Gtk.Box):
 
         # Tab-scoped shortcuts. MANAGED scope + Gtk.Stack unmapping the hidden
         # pages means these are only live while the Logs tab is selected.
-        shortcut_ctrl = Gtk.ShortcutController()
-        shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
-        ctrl = Gdk.ModifierType.CONTROL_MASK
-        for keyval, cb in (
-            (Gdk.KEY_s, self._on_export_shortcut),
-            (Gdk.KEY_r, self._on_run_shortcut),
-            (Gdk.KEY_f, self._on_search_shortcut),
-            (Gdk.KEY_l, self._on_clear_shortcut),
-        ):
-            shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
-                Gtk.KeyvalTrigger.new(keyval, ctrl),
-                Gtk.CallbackAction.new(cb),
-            ))
-        self.add_controller(shortcut_ctrl)
+        # Bindings come from the KeybindingManager catalog so they stay in
+        # sync with the editable shortcuts dialog.
+        self._shortcut_ctrl = Gtk.ShortcutController()
+        self._shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+        self._shortcut_bindings: list[tuple[str, Callable[..., bool]]] = [
+            ("logs-export", self._on_export_shortcut),
+            ("logs-run", self._on_run_shortcut),
+            ("logs-search", self._on_search_shortcut),
+            ("logs-clear", self._on_clear_shortcut),
+        ]
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
+        self.add_controller(self._shortcut_ctrl)
 
         self._update_status_label()
         self._update_list_stack()
