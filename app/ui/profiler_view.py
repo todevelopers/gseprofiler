@@ -987,7 +987,15 @@ class ProfilerView(Gtk.Stack):
             self.emit("show-toast", "Select an enabled extension to start profiling")
 
     def _handle_global_restart(self) -> None:
-        """Stop → clear → start from the global Super+Shift+F5 shortcut.
+        """Clear all data and start a fresh session (global Super+Shift+F5).
+
+        Restart is a single "start from zero" operation: wipe the recorded
+        session, then re-arm profiling on the current target. We deliberately
+        do not send a separate stop_profiling first — the bridge's
+        ``startProfiling()`` unpatches and re-patches when already running, so a
+        lone start_profiling restarts it cleanly in one round-trip. An extra
+        stop would only emit a late profiling_stopped ack that races the new
+        session (see :meth:`_on_message`).
 
         Data is cleared only when profiling can actually be restarted — never
         wipe a recorded session if there is nothing to restart into (no target,
@@ -998,8 +1006,6 @@ class ProfilerView(Gtk.Stack):
                 self._stop_profiling()
             self.emit("show-toast", "Select an enabled extension to start profiling")
             return
-        if self._profiling:
-            self._stop_profiling()
         self._clear_data()
         self._file_label.set_text("")
         self._file_label.set_tooltip_text("")
@@ -1280,8 +1286,18 @@ class ProfilerView(Gtk.Stack):
                 )
                 self._set_stopped()
         elif msg_type == "profiling_stopped":
-            _log.debug("profiling_stopped received")
-            self._set_stopped()
+            # Direct ack to a stop_profiling we sent (target change, extension
+            # disabled, socket teardown, or an explicit stop). The UI already
+            # transitioned to stopped locally at send time, so this ack is
+            # purely confirmatory. If the user has since started a new session,
+            # _profiling is True again and this late ack is stale — acting on it
+            # would tear down the running session's recording pill while the
+            # bridge keeps profiling. The bridge only ever emits this in
+            # response to our own stop, so _profiling=True here always means a
+            # newer start superseded it.
+            _log.debug("profiling_stopped received (profiling=%s)", self._profiling)
+            if not self._profiling:
+                self._set_stopped()
         elif msg_type == "toggle_profiling":
             _log.debug("toggle_profiling received (global shortcut)")
             self._handle_global_toggle()
