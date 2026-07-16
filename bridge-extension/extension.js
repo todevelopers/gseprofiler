@@ -133,8 +133,50 @@ export default class GSEProfilerBridge extends Extension {
             this._socketClient?.send({ type: 'inspect_result', extensionUuid: msg.uuid, path, ...result });
             break;
         }
+        case 'get_keybindings':
+            this._socketClient?.send({ type: 'keybindings', bindings: this._readKeybindings() });
+            break;
+        case 'set_keybinding': {
+            const ok = this._setKeybinding(msg.key, msg.accels);
+            this._socketClient?.send({ type: 'keybindings', bindings: this._readKeybindings(), ok });
+            break;
+        }
         default:
             bridgeLogWarning(`unhandled message type: ${msg.type}`);
         }
+    }
+
+    /** Snapshot of every global shortcut's current accelerators, keyed by
+     *  GSettings key. Empty if the schema failed to load (see
+     *  _registerKeybindings) — the app treats that as "global shortcuts
+     *  unavailable", not "all shortcuts are unbound".
+     *  @returns {Record<string, string[]>} */
+    _readKeybindings() {
+        const bindings = {};
+        if (this._settings) {
+            for (const key of Object.keys(KEYBINDINGS)) {
+                bindings[key] = this._settings.get_strv(key);
+            }
+        }
+        return bindings;
+    }
+
+    /** Persist a new accelerator list for a global keybinding. GNOME Shell's
+     *  window manager keeps a keybinding bound live to its GSettings key —
+     *  the same mechanism behind Settings > Keyboard shortcuts applying
+     *  changes immediately — so writing via set_strv() is enough; no need to
+     *  remove/re-add the binding.
+     *  @param {string} key
+     *  @param {unknown} accels
+     *  @returns {boolean} */
+    _setKeybinding(key, accels) {
+        if (!this._settings || !(key in KEYBINDINGS)) {
+            return false;
+        }
+        if (!Array.isArray(accels) || !accels.every(a => typeof a === 'string')) {
+            return false;
+        }
+        this._settings.set_strv(key, accels);
+        return true;
     }
 }

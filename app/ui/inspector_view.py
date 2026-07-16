@@ -1,17 +1,18 @@
+from collections.abc import Callable
 from typing import Any
 
 import gi
 
 gi.require_version("Adw", "1")
-gi.require_version("Gdk", "4.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("GObject", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
+from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient, ExtensionState
+from app.core.keybindings import KeybindingManager, populate_shortcut_controller
 from app.core.socket_server import SocketServer
 
 _INVALID_POS = GLib.MAXUINT
@@ -59,10 +60,16 @@ class PropertyItem(GObject.Object):
 class InspectorView(Gtk.Stack):
     """Live extension stateObj inspector — Phase 5."""
 
-    def __init__(self, dbus_client: DBusClient, socket_server: SocketServer) -> None:
+    def __init__(
+        self,
+        dbus_client: DBusClient,
+        socket_server: SocketServer,
+        keybindings: KeybindingManager,
+    ) -> None:
         super().__init__()
         self._dbus = dbus_client
         self._socket = socket_server
+        self._keybindings = keybindings
         self._current_uuid: str | None = None
         self._store = Gio.ListStore(item_type=PropertyItem)
         self._current_path: list[str] = []
@@ -79,12 +86,19 @@ class InspectorView(Gtk.Stack):
             (socket_server, socket_server.connect("client-disconnected", self._on_disconnected)),
             (dbus_client, dbus_client.connect("extensions-changed", self._on_extensions_changed)),
         ]
+        self._kb_changed_id = self._keybindings.connect_changed(self._on_keybindings_changed)
         self.connect("destroy", self._on_destroy)
 
     def _on_destroy(self, _widget: Gtk.Widget) -> None:
         for obj, sig_id in self._signal_ids:
             obj.disconnect(sig_id)
         self._signal_ids.clear()
+        self._keybindings.disconnect(self._kb_changed_id)
+
+    def _on_keybindings_changed(self, _action_id: str) -> None:
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
 
     # ── UI construction ────────────────────────────────────────────────────
 
@@ -212,13 +226,17 @@ class InspectorView(Gtk.Stack):
 
         # Tab-scoped shortcut. MANAGED scope + Gtk.Stack unmapping the hidden
         # pages means this is only live while the Inspector tab is selected.
-        shortcut_ctrl = Gtk.ShortcutController()
-        shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
-        shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
-            Gtk.KeyvalTrigger.new(Gdk.KEY_r, Gdk.ModifierType.CONTROL_MASK),
-            Gtk.CallbackAction.new(self._on_refresh_shortcut),
-        ))
-        self.add_controller(shortcut_ctrl)
+        # Bindings come from the KeybindingManager catalog so they stay in
+        # sync with the editable shortcuts dialog.
+        self._shortcut_ctrl = Gtk.ShortcutController()
+        self._shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+        self._shortcut_bindings: list[tuple[str, Callable[..., bool]]] = [
+            ("inspector-refresh", self._on_refresh_shortcut),
+        ]
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
+        self.add_controller(self._shortcut_ctrl)
 
     # ── Name column factory ────────────────────────────────────────────────
 

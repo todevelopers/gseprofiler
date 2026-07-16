@@ -13,10 +13,11 @@ gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
+from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 
 from app.core.dbus_client import DBusClient, ExtensionState
 from app.core.exporters import to_speedscope, to_trace_event
+from app.core.keybindings import KeybindingManager, populate_shortcut_controller
 from app.core.socket_server import SocketServer
 from app.ui.profiler import desaturate_color
 from app.ui.profiler.flamegraph import FlamegraphView
@@ -141,10 +142,16 @@ class ProfilerView(Gtk.Stack):
         "request-attention": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
-    def __init__(self, dbus_client: DBusClient, socket_server: SocketServer) -> None:
+    def __init__(
+        self,
+        dbus_client: DBusClient,
+        socket_server: SocketServer,
+        keybindings: KeybindingManager,
+    ) -> None:
         super().__init__()
         self._dbus = dbus_client
         self._socket = socket_server
+        self._keybindings = keybindings
         self._profiling = False
         self._refresh_pending = False
         self._target_uuid: str | None = None
@@ -179,12 +186,19 @@ class ProfilerView(Gtk.Stack):
             (socket_server, socket_server.connect("client-disconnected", self._on_client_disconnected)),
             (dbus_client, dbus_client.connect("extensions-changed", self._on_extensions_changed)),
         ]
+        self._kb_changed_id = self._keybindings.connect_changed(self._on_keybindings_changed)
         self.connect("destroy", self._on_destroy)
 
     def _on_destroy(self, _widget: Gtk.Widget) -> None:
         for obj, sig_id in self._signal_ids:
             obj.disconnect(sig_id)
         self._signal_ids.clear()
+        self._keybindings.disconnect(self._kb_changed_id)
+
+    def _on_keybindings_changed(self, _action_id: str) -> None:
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
 
     # ── UI construction ────────────────────────────────────────────────────
 
@@ -235,21 +249,21 @@ class ProfilerView(Gtk.Stack):
 
         # Tab-scoped shortcuts. MANAGED scope + Gtk.Stack unmapping the hidden
         # pages means these are only live while the Profiler tab is selected.
-        shortcut_ctrl = Gtk.ShortcutController()
-        shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
-        ctrl = Gdk.ModifierType.CONTROL_MASK
-        for keyval, cb in (
-            (Gdk.KEY_s, self._on_save_shortcut),
-            (Gdk.KEY_o, self._on_load_shortcut),
-            (Gdk.KEY_l, self._on_clear_shortcut),
-            (Gdk.KEY_f, self._on_filter_shortcut),
-            (Gdk.KEY_r, self._on_run_shortcut),
-        ):
-            shortcut_ctrl.add_shortcut(Gtk.Shortcut.new(
-                Gtk.KeyvalTrigger.new(keyval, ctrl),
-                Gtk.CallbackAction.new(cb),
-            ))
-        self.add_controller(shortcut_ctrl)
+        # Bindings come from the KeybindingManager catalog so they stay in
+        # sync with the editable shortcuts dialog.
+        self._shortcut_ctrl = Gtk.ShortcutController()
+        self._shortcut_ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+        self._shortcut_bindings: list[tuple[str, Callable[..., bool]]] = [
+            ("profiler-save", self._on_save_shortcut),
+            ("profiler-load", self._on_load_shortcut),
+            ("profiler-clear", self._on_clear_shortcut),
+            ("profiler-filter", self._on_filter_shortcut),
+            ("profiler-run", self._on_run_shortcut),
+        ]
+        populate_shortcut_controller(
+            self._shortcut_ctrl, self._keybindings, self._shortcut_bindings
+        )
+        self.add_controller(self._shortcut_ctrl)
 
         # Sub-stack: empty placeholder vs. populated dashboard
         self._inner_stack = Gtk.Stack()
