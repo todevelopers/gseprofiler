@@ -364,7 +364,7 @@ adjustment across major GNOME versions.
 
 ---
 
-## Phase 13: Global Keyboard Shortcuts (V2+)
+## Phase 13: Global Keyboard Shortcuts ✅
 
 **Goal:** Start/stop profiling via a keyboard shortcut even when the app has lost focus — e.g. while clicking around in the extension under test.
 
@@ -406,8 +406,8 @@ original toggle-only design.
 
 ### Settings integration (ties into Phase 9) — deferred
 
-- [ ] Expose the `toggle-profiling` / `restart-profiling` GSettings keys in `AdwPreferencesWindow` (Phase 9) so users can rebind them without editing schema files
-- [ ] Sync a displayed shortcut badge next to the Start/Stop button with the current GSettings value
+- [x] Expose the `toggle-profiling` / `restart-profiling` GSettings keys in `AdwPreferencesWindow` (Phase 9) so users can rebind them without editing schema files
+- [ ] Sync a displayed shortcut badge next to the Start/Stop button with the current GSettings value - deferred
 
 ### Protocol additions
 
@@ -538,26 +538,26 @@ the same socket pipeline.
 
 ## Milestone Summary
 
-| Phase | Milestone            | Scope                                                      | Status                 |
-| ----- | -------------------- | ---------------------------------------------------------- | ---------------------- |
-| 0     | Skeleton + CI        | Project setup                                              | ✅ done                 |
-| 1     | Extension Manager    | List, enable/disable                                       | ✅ done                 |
-| 2     | Bridge + Socket      | App ↔ Shell IPC                                            | ✅ done                 |
-| 3     | Log Viewer           | Live filtered logs                                         | ✅ done                 |
-| 4     | Profiler V1          | Timing table + flame graph                                 | ✅ done                 |
-| 5     | Inspector            | stateObj live view (R/O)                                   | ✅ done                 |
-| —     | Pre-release          | Polish, GitHub, Flatpak                                    | ✅ done                 |
-| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                                        | ✅ done                 |
-| 6     | GitHub install       | Install extensions from GitHub                             | ✅ done                 |
-| 7     | Memory profiling     | Heap analysis (V2)                                         | planned                |
-| 8     | Health checks        | Linting + validation (V2+)                                 | planned                |
-| 9     | Settings             | Preferences window (V2+)                                   | planned                |
-| 10    | Extended packaging   | RPM + Flathub full (V2+)                                   | planned                |
-| 11    | Inspector writable   | Full property editing (V2+)                                | planned                |
-| 12    | Startup profiling    | Profile enable() ramp-up (V2+)                             | planned                |
-| 13    | Global shortcuts     | Toggle/restart profiling via keybinding + in-app shortcuts | done (rebind deferred) |
-| 14    | Bridge hardening     | Bug fixes, batching, async profiling                       | planned                |
+| Phase | Milestone            | Scope                                                      | Status                        |
+| ----- | -------------------- | ---------------------------------------------------------- | ----------------------------- |
+| 0     | Skeleton + CI        | Project setup                                              | ✅ done                        |
+| 1     | Extension Manager    | List, enable/disable                                       | ✅ done                        |
+| 2     | Bridge + Socket      | App ↔ Shell IPC                                            | ✅ done                        |
+| 3     | Log Viewer           | Live filtered logs                                         | ✅ done                        |
+| 4     | Profiler V1          | Timing table + flame graph                                 | ✅ done                        |
+| 5     | Inspector            | stateObj live view (R/O)                                   | ✅ done                        |
+| —     | Pre-release          | Polish, GitHub, Flatpak                                    | ✅ done                        |
+| —     | **V1 Release**       | **v1.0.0 + v1.0.1**                                        | ✅ done                        |
+| 6     | GitHub install       | Install extensions from GitHub                             | ✅ done                        |
+| 7     | Memory profiling     | Heap analysis (V2)                                         | planned                       |
+| 8     | Health checks        | Linting + validation (V2+)                                 | planned                       |
+| 9     | Settings             | Preferences window (V2+)                                   | planned                       |
+| 10    | Extended packaging   | RPM + Flathub full (V2+)                                   | planned                       |
+| 11    | Inspector writable   | Full property editing (V2+)                                | planned                       |
+| 12    | Startup profiling    | Profile enable() ramp-up (V2+)                             | planned                       |
+| 13    | Global shortcuts     | Toggle/restart profiling via keybinding + in-app shortcuts | done (rebind deferred)        |
+| 14    | Bridge hardening     | Bug fixes, batching, async profiling                       | planned                       |
 | 15    | Refactoring pass     | log_viewer split, settings, packaging                      | 5/6 done (packaging deferred) |
-| 16    | Export & analysis    | speedscope, merged flame graph                             | planned                |
-| 17    | EGO install          | Install from extensions.gnome.org                          | ✅ done                 |
-| —     | opt-in Developer API | Extension author integration                               | deferred ∞             |
+| 16    | Export & analysis    | speedscope, merged flame graph                             | planned                       |
+| 17    | EGO install          | Install from extensions.gnome.org                          | ✅ done                        |
+| —     | opt-in Developer API | Extension author integration                               | deferred ∞                    |
