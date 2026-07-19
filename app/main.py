@@ -35,7 +35,7 @@ from app.ui.shortcuts_dialog import build_shortcuts_dialog
 
 APP_ID = "io.github.todevelopers.GseProfiler"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_BASE_VERSION = "1.2.0"
+_BASE_VERSION = "1.3.0"
 
 # Window sizing. Below the minimum the packed toolbars (the 4-tab WIDE view
 # switcher and the log-viewer filter row) hit their own minimums and the layout
