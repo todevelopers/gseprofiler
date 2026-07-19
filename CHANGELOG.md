@@ -1,3 +1,15 @@
+## [1.3.0] - 2026-07-19
+
+### Added
+
+- **Install extensions from extensions.gnome.org (EGO)** — the install dialog now has a GitHub tab and an extensions.gnome.org tab; search as you type or paste an extension URL/UUID, with shell-version compatibility checks and update detection alongside the existing GitHub path.
+- **Customizable keyboard shortcuts** — global (Super+F5 toggle, Super+Shift+F5 restart), window, and tab-scoped shortcuts, editable from a new shortcuts dialog with click-to-rebind, per-row/all reset, and in-scope conflict detection; overrides persist across restarts.
+
+### Fixed
+
+- Restarting profiling while a session was running no longer hides the Recording pill and its live timer/event counter.
+- "Check for Updates" no longer auto-installs a new version — it only reveals the Update action; the download happens on demand when you click it.
+
 ## [1.2.0] - 2026-07-09
 
 ### Added
