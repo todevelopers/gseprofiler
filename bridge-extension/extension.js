@@ -41,11 +41,16 @@ export default class GSEProfilerBridge extends Extension {
     _boundKeys = [];
 
     enable() {
-        this._profiler = new Profiler(event => {
-            this._socketClient?.send(event);
-        });
+        this._profiler = new Profiler(
+            event => {
+                this._socketClient?.send(event);
+            },
+            uuid => Main.extensionManager.lookup(uuid),
+        );
 
-        this._inspector = new Inspector();
+        this._inspector = new Inspector(
+            uuid => Main.extensionManager.lookup(uuid),
+        );
 
         this._socketClient = new SocketClient(COMPANION_UUID, msg => this._onMessage(msg));
         this._socketClient.connect();
@@ -116,9 +121,27 @@ export default class GSEProfilerBridge extends Extension {
         switch (msg.type) {
         case 'start_profiling': {
             _dbg(`start_profiling: uuid=${msg.uuid}`);
-            const ok = this._profiler?.startProfiling(msg.uuid) ?? false;
+            const sessionId = Number.isSafeInteger(msg.sessionId) && msg.sessionId >= 0
+                ? msg.sessionId
+                : null;
+            const ok = this._profiler?.startProfiling(msg.uuid, sessionId) ?? false;
             _dbg(`start_profiling result: ok=${ok}`);
-            this._socketClient?.send({ type: 'profiling_started', uuid: msg.uuid, ok });
+            const stats = this._profiler?.stats ?? {
+                patchedFunctions: 0,
+                visitedObjects: 0,
+                skippedFunctions: 0,
+                truncated: false,
+            };
+            const response = {
+                type: 'profiling_started',
+                uuid: msg.uuid,
+                ok,
+                ...stats,
+            };
+            if (sessionId !== null) {
+                response.sessionId = sessionId;
+            }
+            this._socketClient?.send(response);
             break;
         }
         case 'stop_profiling':
@@ -128,7 +151,7 @@ export default class GSEProfilerBridge extends Extension {
             break;
         case 'inspect': {
             const path = msg.path ?? [];
-            _dbg(`inspect: uuid=${msg.uuid} path=[${path.join(',')}]`);
+            _dbg(`inspect: uuid=${msg.uuid} path=${JSON.stringify(path)}`);
             const result = this._inspector?.inspect(msg.uuid, path) ?? { properties: [] };
             this._socketClient?.send({ type: 'inspect_result', extensionUuid: msg.uuid, path, ...result });
             break;

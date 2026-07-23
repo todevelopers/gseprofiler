@@ -7,7 +7,7 @@ import { bridgeLogError, bridgeLogWarning } from './logger.js';
 const SOCKET_SUBDIR = 'gse-profiler';
 const SOCKET_NAME = 'gse-profiler.sock';
 const RECONNECT_DELAY_MS = 3000;
-const PROTOCOL_VERSION = '1';
+const PROTOCOL_VERSION = '2';
 
 function _socketPath() {
     return GLib.build_filenamev([GLib.get_user_runtime_dir(), SOCKET_SUBDIR, SOCKET_NAME]);
