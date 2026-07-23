@@ -136,6 +136,20 @@ that invoke hundreds of functions per frame may see a measurable slowdown during
   each `await`, don't count toward the event's duration. So async methods show their
   synchronous setup cost, not their real end-to-end latency.
 
+### Safety recovery
+
+Profiling only replaces functions on live JavaScript objects inside the running `gnome-shell`
+process; it never modifies the target extension's files. Normally, **Stop profiling** restores
+all wrappers still installed by that recording. If the app is unavailable, disabling the
+**GSE Profiler Bridge** also runs its cleanup.
+
+If the target extension still behaves unexpectedly, disable and enable it to rebuild the
+runtime objects managed by its lifecycle. This is a useful first recovery step, but GNOME Shell
+may reuse the extension's root instance. Logging out and back in starts a clean `gnome-shell`
+process and is therefore the definitive reset for any remaining in-memory patch. Reinstalling
+the target extension alone is unnecessary and does not clear JavaScript code already loaded
+into the current Shell process.
+
 ### Limits
 
 | Limit                                      | Value                         |
