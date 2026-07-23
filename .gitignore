@@ -54,3 +54,7 @@ config.local.*
 
 # Code review file
 gse-profiler_code_review.md
+
+# Codex
+.codex/
+AGENTS.md
