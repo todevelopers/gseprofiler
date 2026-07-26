@@ -1,3 +1,5 @@
+import json
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -25,6 +27,7 @@ _TYPE_PILL_CLASSES: tuple[str, ...] = (
     "t-boolean",
     "t-object",
     "t-array",
+    "t-map",
     "t-function",
     "t-null",
     "t-undefined",
@@ -32,6 +35,88 @@ _TYPE_PILL_CLASSES: tuple[str, ...] = (
     "t-getter",
     "t-info",
 )
+
+PathSegment = str | dict[str, Any]
+_DRILLABLE_TYPES = ("object", "array", "map")
+_MAX_BREADCRUMB_KEY_LEN = 80
+
+
+def _normalize_path_segment(value: Any) -> PathSegment | None:
+    """Validate a bridge path segment before retaining or sending it."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return None
+
+    kind = value.get("kind")
+    key = value.get("key")
+    if kind == "property" and isinstance(key, str):
+        return {"kind": "property", "key": key}
+    if kind == "map-key" and _is_json_safe_map_key(key):
+        return {"kind": "map-key", "key": key}
+    return None
+
+
+def _is_json_safe_map_key(value: Any) -> bool:
+    if value is None or isinstance(value, (str, bool)):
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+    return False
+
+
+def _format_path_segment(segment: PathSegment) -> str:
+    if isinstance(segment, str):
+        return segment
+
+    kind = segment.get("kind")
+    key = segment.get("key")
+    if kind == "property" and isinstance(key, str):
+        return key
+    if kind == "map-key" and _is_json_safe_map_key(key):
+        display_key = key
+        if isinstance(key, str) and len(key) > _MAX_BREADCRUMB_KEY_LEN:
+            display_key = f"{key[:_MAX_BREADCRUMB_KEY_LEN]}…"
+        return json.dumps(display_key, ensure_ascii=False)
+    return "?"
+
+
+def _path_segment_token(value: Any) -> tuple[str, str, object] | None:
+    """Return a type-strict identity matching JavaScript Map key semantics."""
+    segment = _normalize_path_segment(value)
+    if segment is None:
+        return None
+    if isinstance(segment, str):
+        return ("property", "string", segment)
+
+    kind = segment["kind"]
+    key = segment["key"]
+    if kind == "property":
+        return ("property", "string", key)
+    if key is None:
+        return ("map-key", "null", "")
+    if isinstance(key, bool):
+        return ("map-key", "boolean", key)
+    if isinstance(key, str):
+        return ("map-key", "string", key)
+    # JSON-sourced JS numbers can arrive as either int or float. JavaScript
+    # Map treats 1 and 1.0 as the same key, but keeps booleans distinct.
+    return ("map-key", "number", float(key))
+
+
+def _paths_equal(left: Any, right: Any) -> bool:
+    if not isinstance(left, list) or not isinstance(right, list):
+        return False
+    if len(left) != len(right):
+        return False
+    for left_segment, right_segment in zip(left, right, strict=True):
+        left_token = _path_segment_token(left_segment)
+        if left_token is None or left_token != _path_segment_token(right_segment):
+            return False
+    return True
 
 
 class PropertyItem(GObject.Object):
@@ -46,6 +131,7 @@ class PropertyItem(GObject.Object):
         value_str: str,
         depth: int = 0,
         parent_name: str = "",
+        path_segment: PathSegment | None = None,
     ) -> None:
         super().__init__()
         self.name = name
@@ -53,6 +139,7 @@ class PropertyItem(GObject.Object):
         self.value_str = value_str
         self.depth = depth
         self.parent_name = parent_name
+        self.path_segment = path_segment
         self.has_children = False
         self.expanded = False
         self.children_data: list[dict[str, Any]] = []
@@ -73,7 +160,7 @@ class InspectorView(Gtk.Stack):
         self._keybindings = keybindings
         self._current_uuid: str | None = None
         self._store = Gio.ListStore(item_type=PropertyItem)
-        self._current_path: list[str] = []
+        self._current_path: list[PathSegment] = []
         # handler IDs for expand/drill buttons, keyed by id(button widget)
         self._expand_handlers: dict[int, int] = {}
         self._drill_handlers: dict[int, int] = {}
@@ -293,9 +380,13 @@ class InspectorView(Gtk.Stack):
 
         label.set_label(item.name)
 
-        # Drill button — depth-0 object/array. Slot is always present; the
-        # 'inspector-drill-active' class lets CSS reveal it on row hover.
-        drillable = item.depth == 0 and item.type_str in ("object", "array")
+        # Drill button — depth-0 object/array/Map with a resolvable path
+        # segment. The slot is always present; the CSS reveals it on hover.
+        drillable = (
+            item.depth == 0
+            and item.type_str in _DRILLABLE_TYPES
+            and item.path_segment is not None
+        )
         if drillable:
             drill_btn.add_css_class("inspector-drill-active")
             drill_btn.set_can_target(True)
@@ -432,9 +523,10 @@ class InspectorView(Gtk.Stack):
     # ── Drill-in / breadcrumb navigation ──────────────────────────────────
 
     def _on_drill_in(self, _btn: Gtk.Button, item: PropertyItem) -> None:
-        self._navigate_to(self._current_path + [item.name])
+        if item.path_segment is not None:
+            self._navigate_to(self._current_path + [item.path_segment])
 
-    def _navigate_to(self, path: list[str]) -> None:
+    def _navigate_to(self, path: list[PathSegment]) -> None:
         self._current_path = path
         self._update_breadcrumb()
         if self._current_uuid:
@@ -465,21 +557,24 @@ class InspectorView(Gtk.Stack):
         back_btn.connect("clicked", self._on_back)
         self._breadcrumb_box.append(back_btn)
 
-        # Segments: "stateObj › _fetcher › _client" — first is always literal stateObj.
-        segments = ["stateObj"] + self._current_path
-        for i, seg in enumerate(segments):
+        # The first label is always stateObj. Map keys use JSON formatting so
+        # a string key "1" remains visually distinct from the number key 1.
+        labels = ["stateObj"] + [
+            _format_path_segment(segment) for segment in self._current_path
+        ]
+        for i, label in enumerate(labels):
             if i > 0:
                 sep = Gtk.Label(label="›")
                 sep.add_css_class("inspector-bc-sep")
                 self._breadcrumb_box.append(sep)
-            if i < len(segments) - 1:
+            if i < len(labels) - 1:
                 target = self._current_path[:i]
-                btn = Gtk.Button(label=seg)
+                btn = Gtk.Button(label=label)
                 btn.add_css_class("flat")
                 btn.connect("clicked", lambda _b, p=target: self._navigate_to(p))
                 self._breadcrumb_box.append(btn)
             else:
-                lbl = Gtk.Label(label=seg)
+                lbl = Gtk.Label(label=label)
                 lbl.add_css_class("inspector-bc-current")
                 self._breadcrumb_box.append(lbl)
 
@@ -554,25 +649,36 @@ class InspectorView(Gtk.Stack):
         item: PropertyItem | None = self._store.get_item(pos)
         if not item:
             return
-        # Double-click a row with children → drill in.
-        if item.depth == 0 and item.type_str in ("object", "array"):
-            self._navigate_to(self._current_path + [item.name])
+        # Double-click a navigable container row → drill in.
+        if (
+            item.depth == 0
+            and item.type_str in _DRILLABLE_TYPES
+            and item.path_segment is not None
+        ):
+            self._navigate_to(self._current_path + [item.path_segment])
 
     # ── Socket message handling ────────────────────────────────────────────
 
     def _on_inspect_result(self, msg: dict[str, Any]) -> None:
         if msg.get("extensionUuid") != self._current_uuid:
             return
-        if msg.get("path", []) != self._current_path:
+        if not _paths_equal(msg.get("path", []), self._current_path):
             return  # stale response from a previous navigation
         properties: list[dict[str, Any]] = msg.get("properties", [])
 
         items: list[PropertyItem] = []
         for prop in properties:
+            if "pathSegment" in prop:
+                path_segment = _normalize_path_segment(prop.get("pathSegment"))
+            else:
+                # Bridge versions before typed paths used the display name as
+                # the property key. Keep those responses navigable.
+                path_segment = _normalize_path_segment(prop.get("name"))
             pi = PropertyItem(
                 name=prop.get("name", ""),
                 type_str=prop.get("type", "unknown"),
                 value_str=str(prop.get("value", "")),
+                path_segment=path_segment,
             )
             children = prop.get("children")
             if children:

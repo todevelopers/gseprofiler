@@ -72,7 +72,7 @@ GNOME Shell has reloaded (the usual log out / back in).
 There are two parts: a **GTK4 app** (Python) and a **bridge GJS extension**
 (`gse-profiler-bridge@todevelopers`) that the app installs for you on first launch. The
 bridge runs inside the `gnome-shell` process itself, which is what gives it direct,
-in-process access to every loaded extension and its live objects and functions.
+in-process access to each loaded extension's live state and the objects reachable from it.
 
 You have to restart GNOME Shell once after the bridge lands. The app just asks you to log out
 and back in (Wayland only; X11 sessions aren't supported).
@@ -94,35 +94,81 @@ needs elevated permissions.
 
 ### Monkey-patching and overhead
 
-When you start profiling, the bridge walks the extension's `stateObj` (its full prototype
-chain plus one level of owned child objects, like `_indicator`) and wraps every enumerable
-function it finds. You don't change anything in your extension's source, and all the patches
-are fully reversed the moment you stop.
+When you start profiling, the bridge takes a snapshot of the live object graph rooted at the
+extension's `stateObj`. It walks methods on each object's prototype chain and recursively
+follows object-valued data properties. Arrays, `Map` values, and `Set` values are traversed as
+collections, so module-manager patterns such as `Map<string, Module>` are covered too. Cycle
+detection and traversal safety limits keep large or self-referential graphs bounded. Getters
+and arbitrary iterators are not invoked because running extension code during discovery could
+have side effects.
+
+Every method the bridge successfully wraps is **instrumented**. A method becomes **observed**
+only after it is called while recording; only observed methods have timing rows in the table.
+The Profiler UI shows both counts so a method that was instrumented but never exercised is not
+mistaken for a discovery failure. Stop/Start keeps the observed recording until you clear it,
+while the instrumented count always describes the latest discovery scan.
+
+Discovery is a start-time snapshot. Objects, collection entries, or functions added afterwards
+are not picked up automatically; restart profiling to clear the recording and scan the current
+graph again. You don't change anything in your extension's source, and installed wrappers are
+fully reversed when profiling stops.
 
 Each wrapped call adds two `GLib.get_monotonic_time()` reads (microsecond precision) and
-queues one JSON event for the socket. For a typical GNOME Shell extension the overhead is
-negligible, but extremely tight animation loops or extensions that invoke hundreds of
-functions per frame may see a measurable slowdown during recording.
+queues a timing event. The bridge sends a batch every 50 ms or when 256 events are queued,
+whichever comes first, to reduce socket overhead. Batches carry a recording generation so a
+late batch from before Restart cannot contaminate the fresh recording. For a typical GNOME
+Shell extension the overhead is negligible, but extremely tight animation loops or extensions
+that invoke hundreds of functions per frame may see a measurable slowdown during recording.
 
-**What the profiler cannot patch:**
+**What runtime monkey-patching cannot capture automatically:**
 
 - GObject virtual functions (vfuncs)
-- Closures stored in plain variables (not reachable by property enumeration)
-- Functions added dynamically after profiling starts
+- Module-level helpers, closures, and other functions held only in lexical variables
+- ECMAScript `#private` methods
+- Symbol-keyed methods or object-graph links
+- Values hidden inside `WeakMap` or `WeakSet`, which JavaScript cannot enumerate
+- Objects exposed only through getters, because discovery deliberately does not execute getters
+- Constructors, `enable()`, and other calls that finished before profiling started
+- Callback references that were bound or copied before their method property was wrapped
+- Functions or collection entries added after the start-time snapshot (restart to rescan)
 - **Async timing:** an `async` function is only recorded until it returns its `Promise`,
   usually at the first `await`. The time spent waiting, and the continuations that run after
   each `await`, don't count toward the event's duration. So async methods show their
   synchronous setup cost, not their real end-to-end latency.
 
+### Safety recovery
+
+Profiling only replaces functions on live JavaScript objects inside the running `gnome-shell`
+process; it never modifies the target extension's files. Normally, **Stop profiling** restores
+all wrappers still installed by that recording. If the app is unavailable, disabling the
+**GSE Profiler Bridge** also runs its cleanup.
+
+If the target extension still behaves unexpectedly, disable and enable it to rebuild the
+runtime objects managed by its lifecycle. This is a useful first recovery step, but GNOME Shell
+may reuse the extension's root instance. Logging out and back in starts a clean `gnome-shell`
+process and is therefore the definitive reset for any remaining in-memory patch. Reinstalling
+the target extension alone is unnecessary and does not clear JavaScript code already loaded
+into the current Shell process.
+
 ### Limits
 
-| Limit                                | Value                         |
-| ------------------------------------ | ----------------------------- |
-| Max recorded events                  | 50,000 (oldest dropped first) |
-| Inspector: max properties per object | 50                            |
-| Inspector: max string value length   | 200 characters                |
-| Inspector: max array elements shown  | 50                            |
-| UI refresh batch window              | 80 ms                         |
+| Limit                                      | Value                         |
+| ------------------------------------------ | ----------------------------- |
+| Profiler: max traversal depth              | 6 (root is depth 0)           |
+| Profiler: max visited objects              | 2,000                         |
+| Profiler: max entries per Array/Map/Set    | 512                           |
+| Profiler: max own properties per object    | 2,048                         |
+| Profiler: max instrumented functions       | 5,000                         |
+| Profiler: bridge event batch               | 50 ms or 256 events           |
+| Max recorded events                        | 50,000 (oldest dropped first) |
+| Inspector: max properties per object       | 50                            |
+| Inspector: max string value length         | 200 characters                |
+| Inspector: max array elements shown        | 50                            |
+| Inspector: max Map entries shown            | 50                            |
+| UI refresh batch window                    | 80 ms                         |
+
+If any profiler traversal cap is reached, the bridge marks the scan as truncated and the UI
+labels the instrumentation result as limited.
 
 ### Profiler views
 

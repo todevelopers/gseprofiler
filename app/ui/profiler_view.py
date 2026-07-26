@@ -1,5 +1,6 @@
 import json
 import logging
+import secrets
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
@@ -57,7 +58,11 @@ _MODE_HINTS: dict[str, str] = {
 }
 
 _FN_HINT = (
-    "Lists every profiled function with aggregated stats across all calls."
+    "Lists functions that were observed at least once while recording, with"
+    " aggregated stats across all calls. Instrumented functions that were not"
+    " called do not appear as rows. Observed data remains accumulated across"
+    " Stop/Start until it is cleared; the instrumented count describes the"
+    " latest discovery scan."
     " Total is the full duration including time spent in nested calls."
     " Self is time the function spent in its own code only; if it calls other"
     " functions, their time is not counted. A function with high Total but low"
@@ -77,6 +82,11 @@ def _fmt_ms(v: float) -> str:
     if v >= 1.0:
         return f"{v:.2f} ms"
     return f"{v:.3f} ms"
+
+
+def _count_label(count: int, singular: str) -> str:
+    suffix = "" if count == 1 else "s"
+    return f"{count} {singular}{suffix}"
 
 
 class FunctionStat(GObject.Object):
@@ -126,6 +136,13 @@ class ProfilerView(Gtk.Stack):
         self._profiling = False
         self._refresh_pending = False
         self._target_uuid: str | None = None
+        # Randomize the per-process base so a late batch from a bridge session
+        # that outlived a crashed/restarted app cannot collide with the first
+        # recording generation of the new process.
+        self._start_generation = secrets.randbits(48)
+        self._active_start_generation = 0
+        self._accepted_event_generation = 0
+        self._pending_start_acks: deque[tuple[int, str]] = deque()
 
         # Data
         self._stats: dict[str, FunctionStat] = {}
@@ -133,6 +150,10 @@ class ProfilerView(Gtk.Stack):
         self._selected_fn: str | None = None
         self._filter_text: str = ""
         self._max_total_ms: float = 1.0
+        self._instrumented_functions: int | None = None
+        self._visited_objects: int | None = None
+        self._skipped_functions: int | None = None
+        self._instrumentation_truncated = False
 
         # Recording stopwatch
         self._rec_start_ts: float | None = None
@@ -156,6 +177,7 @@ class ProfilerView(Gtk.Stack):
         # a per-view type filter (see app/core/message_router.py).
         self._router = MessageRouter(socket_server)
         self._router.on("profile_event", self._on_profile_event)
+        self._router.on("profile_batch", self._on_profile_batch)
         self._router.on("profiling_started", self._on_profiling_started)
         self._router.on("profiling_stopped", self._on_profiling_stopped)
         self._router.on("toggle_profiling", self._on_toggle_profiling)
@@ -352,21 +374,35 @@ class ProfilerView(Gtk.Stack):
         return toolbar
 
     def _set_start_stop_state(self, running: bool) -> None:
+        self._set_run_button_state(self._start_stop_btn, running)
+        empty_btn = getattr(self, "_empty_start_btn", None)
+        if empty_btn is not None:
+            self._set_run_button_state(empty_btn, running)
+        self._update_empty_state()
+
+    @staticmethod
+    def _set_run_button_state(button: Gtk.Button, running: bool) -> None:
         icon_name = "media-playback-stop-symbolic" if running else "media-playback-start-symbolic"
         label_text = "Stop" if running else "Start"
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         box.append(Gtk.Image.new_from_icon_name(icon_name))
         box.append(Gtk.Label(label=label_text))
-        self._start_stop_btn.set_child(box)
+        button.set_child(box)
 
         if running:
-            self._start_stop_btn.remove_css_class("suggested-action")
-            self._start_stop_btn.add_css_class("destructive-action")
-            self._start_stop_btn.set_tooltip_text("Stop profiling")
+            button.remove_css_class("suggested-action")
+            button.add_css_class("destructive-action")
+            button.set_tooltip_text("Stop profiling")
         else:
-            self._start_stop_btn.remove_css_class("destructive-action")
-            self._start_stop_btn.add_css_class("suggested-action")
-            self._start_stop_btn.set_tooltip_text("Start profiling selected extension")
+            button.remove_css_class("destructive-action")
+            button.add_css_class("suggested-action")
+            button.set_tooltip_text("Start profiling selected extension")
+
+    def _set_start_stop_sensitive(self, sensitive: bool) -> None:
+        self._start_stop_btn.set_sensitive(sensitive)
+        empty_btn = getattr(self, "_empty_start_btn", None)
+        if empty_btn is not None:
+            empty_btn.set_sensitive(sensitive)
 
     # ── Empty state (inside content) ──────────────────────────────────────
 
@@ -398,26 +434,20 @@ class ProfilerView(Gtk.Stack):
 
     def _build_empty_state(self) -> Gtk.Widget:
         page = Adw.StatusPage()
+        self._empty_page = page
         page.set_icon_name("power-profile-performance-symbolic")
         page.set_title("Ready to profile")
-        page.set_description(
-            "The bridge extension patches every function on the target extension's "
-            "stateObj and records the time spent in each."
-        )
         page.set_vexpand(True)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         actions.set_halign(Gtk.Align.CENTER)
 
-        start_btn = Gtk.Button()
-        start_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        start_box.append(Gtk.Image.new_from_icon_name("media-playback-start-symbolic"))
-        start_box.append(Gtk.Label(label="Start"))
-        start_btn.set_child(start_box)
-        start_btn.add_css_class("suggested-action")
-        start_btn.add_css_class("pill")
-        start_btn.connect("clicked", self._on_start_stop)
-        actions.append(start_btn)
+        self._empty_start_btn = Gtk.Button()
+        self._empty_start_btn.add_css_class("pill")
+        self._empty_start_btn.connect("clicked", self._on_start_stop)
+        self._set_run_button_state(self._empty_start_btn, self._profiling)
+        self._empty_start_btn.set_sensitive(self._start_stop_btn.get_sensitive())
+        actions.append(self._empty_start_btn)
 
         load_btn = Gtk.Button()
         load_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -429,7 +459,53 @@ class ProfilerView(Gtk.Stack):
         actions.append(load_btn)
 
         page.set_child(actions)
+        self._update_empty_state()
         return page
+
+    def _update_empty_state(self) -> None:
+        page = getattr(self, "_empty_page", None)
+        if page is None:
+            return
+
+        if self._profiling:
+            page.set_title("Recording")
+            if self._instrumented_functions is None:
+                description = (
+                    "Discovering reachable functions. Use the extension while "
+                    "recording to capture calls."
+                )
+            else:
+                description = (
+                    f"{_count_label(self._instrumented_functions, 'function')} "
+                    "instrumented in the latest scan; "
+                    f"{len(self._stats)} observed in the recording. Use the "
+                    "extension to capture calls."
+                )
+        else:
+            page.set_title("Ready to profile")
+            if self._instrumented_functions is not None and not self._raw_events:
+                description = (
+                    "The last scan instrumented "
+                    f"{_count_label(self._instrumented_functions, 'function')}, "
+                    "but no calls were observed."
+                )
+            else:
+                description = (
+                    "The bridge instruments functions reachable from the extension's "
+                    "live object graph and records calls made while profiling."
+                )
+
+        warnings = []
+        if self._skipped_functions:
+            warnings.append(
+                f"{_count_label(self._skipped_functions, 'function')} "
+                "could not be instrumented"
+            )
+        if self._instrumentation_truncated:
+            warnings.append("the traversal safety limit was reached")
+        if warnings:
+            description += " Note: " + "; ".join(warnings) + "."
+        page.set_description(description)
 
     # ── Data view (cards + timeline panel + table) ────────────────────────
 
@@ -503,7 +579,9 @@ class ProfilerView(Gtk.Stack):
         n_calls = sum(s.count for s in self._stats.values())
         wall_ms = sum(s.self_ms for s in self._stats.values())
         self._card_calls.set_value(f"{n_calls:,}".replace(",", " "))
-        self._card_calls.set_sub(f"across {len(self._stats)} functions")
+        self._card_calls.set_sub(
+            f"across {_count_label(len(self._stats), 'observed function')}"
+        )
 
         self._card_wall.set_value(_fmt_ms(wall_ms))
         self._card_wall.set_sub("sum of self time")
@@ -661,7 +739,7 @@ class ProfilerView(Gtk.Stack):
     def _build_functions_header(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
 
-        title = Gtk.Label(label="Functions")
+        title = Gtk.Label(label="Observed Functions")
         title.set_xalign(0.0)
         title.add_css_class("prof-section-title")
         box.append(title)
@@ -670,10 +748,10 @@ class ProfilerView(Gtk.Stack):
         self._fn_caption.add_css_class("prof-section-sub")
         box.append(self._fn_caption)
 
-        fn_info = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
-        fn_info.add_css_class("prof-info-btn")
-        fn_info.set_tooltip_text(_FN_HINT)
-        box.append(fn_info)
+        self._fn_info = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
+        self._fn_info.add_css_class("prof-info-btn")
+        self._fn_info.set_tooltip_text(_FN_HINT)
+        box.append(self._fn_info)
 
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
@@ -903,22 +981,22 @@ class ProfilerView(Gtk.Stack):
         uuid = self._target_uuid
         if uuid is None:
             self.set_visible_child_name("placeholder")
-            self._start_stop_btn.set_sensitive(False)
+            self._set_start_stop_sensitive(False)
             return
         if self._dbus.get_extension_state(uuid) != ExtensionState.ENABLED:
             if self._profiling:
                 self._socket.send({"type": "stop_profiling"})
                 self._set_stopped()
             self.set_visible_child_name("disabled")
-            self._start_stop_btn.set_sensitive(False)
+            self._set_start_stop_sensitive(False)
             return
         bridge_online = self._socket.is_client_connected
         if not bridge_online and not self._raw_events:
             self.set_visible_child_name("bridge-offline")
-            self._start_stop_btn.set_sensitive(False)
+            self._set_start_stop_sensitive(False)
             return
         self.set_visible_child_name("content")
-        self._start_stop_btn.set_sensitive(bridge_online)
+        self._set_start_stop_sensitive(bridge_online)
 
     def _on_extensions_changed(
         self, _dbus: DBusClient, _extensions: dict[str, Any]
@@ -941,7 +1019,19 @@ class ProfilerView(Gtk.Stack):
         if not uuid:
             _log.warning("Start requested but no target extension set")
             return False
-        self._socket.send({"type": "start_profiling", "uuid": uuid})
+
+        self._start_generation += 1
+        self._active_start_generation = self._start_generation
+        self._accepted_event_generation = self._start_generation
+        self._pending_start_acks.append((self._start_generation, uuid))
+        self._reset_instrumentation()
+        self._socket.send(
+            {
+                "type": "start_profiling",
+                "uuid": uuid,
+                "sessionId": self._start_generation,
+            }
+        )
         self._profiling = True
         self._rec_start_ts = GLib.get_monotonic_time() / 1e6
         self._start_rec_timer()
@@ -1005,6 +1095,7 @@ class ProfilerView(Gtk.Stack):
 
     def _set_stopped(self) -> None:
         self._profiling = False
+        self._active_start_generation = 0
         self._stop_rec_timer()
         self._rec_start_ts = None
         self._set_start_stop_state(running=False)
@@ -1014,7 +1105,7 @@ class ProfilerView(Gtk.Stack):
             and self._dbus.get_extension_state(self._target_uuid) == ExtensionState.ENABLED
             and self._socket.is_client_connected
         )
-        self._start_stop_btn.set_sensitive(enabled)
+        self._set_start_stop_sensitive(enabled)
 
     def _start_rec_timer(self) -> None:
         if self._rec_timer_id:
@@ -1190,13 +1281,14 @@ class ProfilerView(Gtk.Stack):
             return
 
         self._clear_data()
+        self._reset_instrumentation()
         for event in data.get("events", []):
             self._ingest_event(event, schedule_refresh=False)
         self._file_label.set_text(gfile.get_basename() or "")
         self._file_label.set_tooltip_text(gfile.get_path() or "")
         self.set_visible_child_name("content")
         uuid = self._target_uuid
-        self._start_stop_btn.set_sensitive(
+        self._set_start_stop_sensitive(
             uuid is not None
             and self._dbus.get_extension_state(uuid) == ExtensionState.ENABLED
             and self._socket.is_client_connected
@@ -1204,7 +1296,11 @@ class ProfilerView(Gtk.Stack):
         self._flush_refresh()
 
     def _on_clear(self, _btn: Gtk.Button) -> None:
+        if not self._profiling:
+            self._accepted_event_generation = 0
         self._clear_data()
+        if not self._profiling:
+            self._reset_instrumentation()
         self._file_label.set_text("")
         self._file_label.set_tooltip_text("")
         self._flush_refresh()
@@ -1249,7 +1345,20 @@ class ProfilerView(Gtk.Stack):
 
     # ── Socket handlers ───────────────────────────────────────────────────
 
+    def _accepts_profile_message(self, msg: dict[str, Any]) -> bool:
+        """Reject events from a superseded recording generation."""
+        if "sessionId" not in msg:
+            return True  # legacy bridge payload
+        session_id = self._nonnegative_count(msg.get("sessionId"))
+        return (
+            session_id is not None
+            and session_id == self._accepted_event_generation
+        )
+
     def _on_profile_event(self, msg: dict[str, Any]) -> None:
+        if not self._accepts_profile_message(msg):
+            _log.debug("Ignoring profile_event from a stale session")
+            return
         _log.debug(
             "profile_event: fn=%s dur=%.3fms",
             msg.get("function"),
@@ -1257,14 +1366,92 @@ class ProfilerView(Gtk.Stack):
         )
         self._ingest_event(msg)
 
+    def _on_profile_batch(self, msg: dict[str, Any]) -> None:
+        if not self._accepts_profile_message(msg):
+            _log.debug("Ignoring profile_batch from a stale session")
+            return
+        events = msg.get("events")
+        if not isinstance(events, list):
+            _log.warning("Ignoring malformed profile_batch without an events array")
+            return
+
+        ingested = 0
+        for event in events:
+            if not isinstance(event, dict):
+                _log.warning("Ignoring non-object event in profile_batch")
+                continue
+            if not self._accepts_profile_message(event):
+                _log.debug("Ignoring event from a stale session within profile_batch")
+                continue
+            self._ingest_event(event, schedule_refresh=False)
+            ingested += 1
+        if ingested:
+            _log.debug("profile_batch: ingested %d events", ingested)
+            self._schedule_refresh()
+
     def _on_profiling_started(self, msg: dict[str, Any]) -> None:
         _log.info("profiling_started: uuid=%s ok=%s", msg.get("uuid"), msg.get("ok"))
+
+        if not self._pending_start_acks:
+            _log.debug("Ignoring profiling_started with no pending start request")
+            return
+
+        if "sessionId" in msg:
+            ack_session_id = self._nonnegative_count(msg.get("sessionId"))
+            if ack_session_id is None:
+                _log.warning("Ignoring profiling_started with an invalid sessionId")
+                return
+            pending = next(
+                (
+                    item
+                    for item in self._pending_start_acks
+                    if item[0] == ack_session_id
+                ),
+                None,
+            )
+            if pending is None:
+                _log.debug(
+                    "Ignoring profiling_started for unknown session %d",
+                    ack_session_id,
+                )
+                return
+            self._pending_start_acks.remove(pending)
+            generation, requested_uuid = pending
+        else:
+            # Compatibility with bridge versions that predate session IDs;
+            # their socket replies are ordered.
+            generation, requested_uuid = self._pending_start_acks.popleft()
+        ack_uuid = msg.get("uuid")
+        if isinstance(ack_uuid, str) and ack_uuid != requested_uuid:
+            _log.warning(
+                "Ignoring out-of-order profiling_started for %s (expected %s)",
+                ack_uuid,
+                requested_uuid,
+            )
+            return
+
+        is_current = (
+            self._profiling
+            and generation == self._active_start_generation
+            and requested_uuid == self._target_uuid
+        )
+        if not is_current:
+            _log.debug(
+                "Ignoring stale profiling_started for generation %d (active=%d)",
+                generation,
+                self._active_start_generation,
+            )
+            return
+
         if not msg.get("ok"):
             _log.warning(
                 "Bridge could not find stateObj for %s — no functions patched",
-                msg.get("uuid"),
+                requested_uuid,
             )
             self._set_stopped()
+            return
+
+        self._apply_instrumentation_stats(msg)
 
     def _on_profiling_stopped(self, _msg: dict[str, Any]) -> None:
         # Direct ack to a stop_profiling we sent (target change, extension
@@ -1292,9 +1479,60 @@ class ProfilerView(Gtk.Stack):
         self._update_visible_child()
 
     def _on_client_disconnected(self, _server: SocketServer) -> None:
+        self._pending_start_acks.clear()
+        self._accepted_event_generation = 0
         if self._profiling:
             self._set_stopped()
         self._update_visible_child()
+
+    @staticmethod
+    def _nonnegative_count(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    def _reset_instrumentation(self) -> None:
+        self._instrumented_functions = None
+        self._visited_objects = None
+        self._skipped_functions = None
+        self._instrumentation_truncated = False
+        self._update_instrumentation_ui()
+
+    def _apply_instrumentation_stats(self, msg: dict[str, Any]) -> None:
+        # All fields are optional for compatibility with older bridge versions.
+        self._instrumented_functions = self._nonnegative_count(
+            msg.get("patchedFunctions")
+        )
+        self._visited_objects = self._nonnegative_count(msg.get("visitedObjects"))
+        self._skipped_functions = self._nonnegative_count(
+            msg.get("skippedFunctions")
+        )
+        self._instrumentation_truncated = msg.get("truncated") is True
+        self._update_instrumentation_ui()
+
+    def _update_instrumentation_ui(self) -> None:
+        self._update_empty_state()
+        if not hasattr(self, "_fn_caption"):
+            return
+        self._refresh_table_only()
+
+        details = []
+        if self._instrumented_functions is not None:
+            details.append(
+                f"{_count_label(self._instrumented_functions, 'function')} instrumented"
+            )
+        if self._visited_objects is not None:
+            details.append(
+                f"{_count_label(self._visited_objects, 'object')} visited"
+            )
+        if self._skipped_functions is not None:
+            details.append(
+                f"{_count_label(self._skipped_functions, 'function')} skipped"
+            )
+        if self._instrumentation_truncated:
+            details.append("traversal stopped at a safety limit")
+        suffix = "\n\nLatest scan: " + " · ".join(details) if details else ""
+        self._fn_info.set_tooltip_text(_FN_HINT + suffix)
 
     # ── Data management ──────────────────────────────────────────────────
 
@@ -1344,6 +1582,7 @@ class ProfilerView(Gtk.Stack):
         self._update_active_graph()
         self._update_timeline_caption()
         self._update_recording_pill()
+        self._update_empty_state()
 
     def _refresh_table_only(self) -> None:
         ft = self._filter_text
@@ -1353,9 +1592,16 @@ class ProfilerView(Gtk.Stack):
                 continue
             items.append(self._stat_snapshot(s))
         self._store.splice(0, self._store.get_n_items(), items)
-        self._fn_caption.set_text(
-            f"{len(items)} shown · {len(self._stats)} total" if ft else f"{len(self._stats)} unique"
-        )
+        summary = [f"{len(self._stats)} observed total"]
+        if self._instrumented_functions is not None:
+            summary.append(f"{self._instrumented_functions} instrumented last scan")
+        if self._skipped_functions:
+            summary.append(f"{self._skipped_functions} skipped")
+        if self._instrumentation_truncated:
+            summary.append("limited")
+        if ft:
+            summary.insert(0, f"{len(items)} shown")
+        self._fn_caption.set_text(" · ".join(summary))
         # Splice resets selection — restore from our authoritative state.
         self._sync_table_selection(self._selected_fn)
 
