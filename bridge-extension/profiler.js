@@ -291,7 +291,7 @@ export class Profiler {
         this.#sessionId++;
 
         try {
-            this.#patchTree(ext.stateObj, '', new Set(), 0);
+            this.#patchGraph(ext.stateObj);
             this.#running = true;
         } catch (e) {
             // Object/proxy-level failures are handled locally. This is only a
@@ -372,23 +372,60 @@ export class Profiler {
 
     // ── Discovery ─────────────────────────────────────────────────────────
 
-    #patchTree(obj, prefix, visited, depth) {
-        if (this.#discoveryStopped || !_isObject(obj) || visited.has(obj)) {
-            return;
-        }
-        if (depth > this.#limits.maxDepth) {
-            this.#stats.truncated = true;
-            return;
-        }
-        if (this.#stats.visitedObjects >= this.#limits.maxVisitedObjects) {
-            this.#stats.truncated = true;
-            this.#discoveryStopped = true;
-            return;
+    /**
+     * Breadth-first scan of the reachable graph.
+     *
+     * Order matters as much as the limits do. Methods sit near the root while
+     * bulk data (cached items, parsed entries) sits deeper, so a depth-first
+     * walk lets one data-heavy sibling consume the whole visit budget and
+     * starve every sibling after it — the extension's real behaviour then
+     * never gets instrumented at all. Level order spends the budget on the
+     * shallow objects first and truncates the deep data instead.
+     */
+    #patchGraph(root) {
+        /** @type {Array<{obj: object, prefix: string, depth: number}>} */
+        const queue = [];
+        let head = 0;
+        // Claim objects when they are queued so the same object is never
+        // scheduled twice, even when several parents reference it.
+        const visited = new Set();
+        const enqueue = (value, prefix, depth) => {
+            if (!_isObject(value) || visited.has(value)) {
+                return;
+            }
+            if (depth > this.#limits.maxDepth) {
+                this.#stats.truncated = true;
+                return;
+            }
+            visited.add(value);
+            queue.push({ obj: value, prefix, depth });
+        };
+
+        enqueue(root, '', 0);
+
+        while (head < queue.length) {
+            if (this.#stats.visitedObjects >= this.#limits.maxVisitedObjects) {
+                this.#stats.truncated = true;
+                break;
+            }
+            const { obj, prefix, depth } = queue[head++];
+            this.#stats.visitedObjects++;
+            this.#visitObject(obj, prefix, depth, enqueue);
+            if (this.#discoveryStopped) {
+                break;
+            }
         }
 
-        visited.add(obj);
-        this.#stats.visitedObjects++;
+        if (head < queue.length) {
+            this.#stats.truncated = true;
+        }
+    }
 
+    /**
+     * Patch one object's methods and queue its object-valued children.
+     * @param {(value: unknown, prefix: string, depth: number) => void} enqueue
+     */
+    #visitObject(obj, prefix, depth, enqueue) {
         const collectionKind = _collectionKind(obj);
 
         // Own methods can be extension code even on a collection instance.
@@ -424,23 +461,20 @@ export class Profiler {
 
         const handledOwnProperties = new Set();
         if (collectionKind === 'map') {
-            this.#walkMap(obj, prefix, visited, depth);
+            this.#walkMap(obj, prefix, depth, enqueue);
         } else if (collectionKind === 'set') {
-            this.#walkSet(obj, prefix, visited, depth);
+            this.#walkSet(obj, prefix, depth, enqueue);
         } else if (collectionKind === 'array') {
-            this.#walkArray(obj, prefix, visited, depth, handledOwnProperties);
-        }
-        if (this.#discoveryStopped) {
-            return;
+            this.#walkArray(obj, prefix, depth, handledOwnProperties, enqueue);
         }
 
         // Collection instances may also carry custom own properties.
         this.#walkOwnObjectProperties(
             obj,
             prefix,
-            visited,
             depth,
             handledOwnProperties,
+            enqueue,
         );
     }
 
@@ -458,7 +492,7 @@ export class Profiler {
         return names;
     }
 
-    #walkMap(map, prefix, visited, depth) {
+    #walkMap(map, prefix, depth, enqueue) {
         let iterator;
         try {
             iterator = MAP_ENTRIES.call(map);
@@ -481,10 +515,7 @@ export class Profiler {
             const entry = step.value;
             if (Array.isArray(entry) && entry.length >= 2) {
                 const childPrefix = _mapEntryPrefix(prefix, entry[0], index);
-                this.#patchTree(entry[1], childPrefix, visited, depth + 1);
-                if (this.#discoveryStopped) {
-                    return;
-                }
+                enqueue(entry[1], childPrefix, depth + 1);
             }
             index++;
         }
@@ -499,7 +530,7 @@ export class Profiler {
 
     }
 
-    #walkSet(set, prefix, visited, depth) {
+    #walkSet(set, prefix, depth, enqueue) {
         let iterator;
         try {
             iterator = SET_VALUES.call(set);
@@ -519,10 +550,7 @@ export class Profiler {
                 return;
             }
 
-            this.#patchTree(step.value, `${prefix}[${index}]`, visited, depth + 1);
-            if (this.#discoveryStopped) {
-                return;
-            }
+            enqueue(step.value, `${prefix}[${index}]`, depth + 1);
             index++;
         }
 
@@ -535,7 +563,7 @@ export class Profiler {
         }
     }
 
-    #walkArray(array, prefix, visited, depth, handledOwnProperties) {
+    #walkArray(array, prefix, depth, handledOwnProperties, enqueue) {
         const names = this.#boundedOwnPropertyNames(array);
 
         let visitedEntries = 0;
@@ -557,15 +585,12 @@ export class Profiler {
             } catch (_e) {
                 continue;
             }
-            this.#patchTree(desc?.value, `${prefix}[${name}]`, visited, depth + 1);
-            if (this.#discoveryStopped) {
-                return;
-            }
+            enqueue(desc?.value, `${prefix}[${name}]`, depth + 1);
             visitedEntries++;
         }
     }
 
-    #walkOwnObjectProperties(obj, prefix, visited, depth, ignoredNames) {
+    #walkOwnObjectProperties(obj, prefix, depth, ignoredNames, enqueue) {
         const names = this.#boundedOwnPropertyNames(obj);
 
         for (const name of names) {
@@ -581,15 +606,7 @@ export class Profiler {
             if (!_isObject(desc?.value)) {
                 continue;
             }
-            this.#patchTree(
-                desc.value,
-                _propertyPrefix(prefix, name),
-                visited,
-                depth + 1,
-            );
-            if (this.#discoveryStopped) {
-                return;
-            }
+            enqueue(desc.value, _propertyPrefix(prefix, name), depth + 1);
         }
     }
 

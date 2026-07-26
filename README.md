@@ -95,9 +95,14 @@ needs elevated permissions.
 ### Monkey-patching and overhead
 
 When you start profiling, the bridge takes a snapshot of the live object graph rooted at the
-extension's `stateObj`. It walks methods on each object's prototype chain and recursively
-follows object-valued data properties. Arrays, `Map` values, and `Set` values are traversed as
-collections, so module-manager patterns such as `Map<string, Module>` are covered too. Cycle
+extension's `stateObj`. It walks methods on each object's prototype chain and follows
+object-valued data properties breadth-first. Arrays, `Map` values, and `Set` values are
+traversed as collections, so module-manager patterns such as `Map<string, Module>` are covered
+too. Breadth-first order matters when a limit is hit: methods sit near the root while bulk data
+(cached feed items, parsed entries) sits deeper, so the scan instruments every shallow object
+before it starts spending its budget on deep data. A store holding thousands of cached records
+therefore truncates its own contents instead of starving the sibling objects that hold the
+extension's actual behaviour. Cycle
 detection and traversal safety limits keep large or self-referential graphs bounded. Getters
 and arbitrary iterators are not invoked because running extension code during discovery could
 have side effects.
