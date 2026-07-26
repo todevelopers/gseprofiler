@@ -137,6 +137,44 @@ function testCollectionTraversal() {
     );
 }
 
+function testDataHeavySiblingDoesNotStarvePeers() {
+    // Mirrors the rss-feed layout from issue #23: a store full of cached data
+    // is enumerated before the objects that carry the extension's behaviour.
+    // Discovery must spend its visit budget breadth-first, otherwise the store
+    // exhausts it and the siblings after it are never instrumented.
+    const sources = new Map();
+    for (let source = 0; source < 8; source++) {
+        const items = [];
+        for (let item = 0; item < 20; item++) {
+            items.push({ title: `title-${item}`, meta: { read: false } });
+        }
+        sources.set(`https://example.com/feed${source}`, { items, merge() {} });
+    }
+
+    const stateObj = {};
+    stateObj._store = { _sources: sources, getSources() {} };
+    stateObj._indicator = { onReload() {} };
+    stateObj._poller = { refresh() {} };
+
+    const messages = [];
+    const profiler = makeProfiler(stateObj, messages, { maxVisitedObjects: 30 });
+    assert(profiler.startProfiling('test@example.com'), 'starved scenario should start');
+    assert(profiler.stats.truncated, 'the visit budget must actually run out');
+
+    stateObj._store.getSources();
+    stateObj._indicator.onReload();
+    stateObj._poller.refresh();
+    profiler.stopProfiling();
+
+    const names = eventNames(messages);
+    assert(names.includes('_store.getSources'), 'the data-heavy sibling stays instrumented');
+    assert(
+        names.includes('_indicator.onReload'),
+        'a truncated sibling must not starve the siblings enumerated after it',
+    );
+    assert(names.includes('_poller.refresh'), 'every shallow sibling must be instrumented');
+}
+
 function testExactDescriptorRestoration() {
     const ownOriginal = function ownOriginal() {
         return 'own';
@@ -452,6 +490,7 @@ function testRestartDiscardsOldQueue() {
 
 const TESTS = [
     testCollectionTraversal,
+    testDataHeavySiblingDoesNotStarvePeers,
     testExactDescriptorRestoration,
     testDistinctSymbolMapPaths,
     testUnpatchableFunctionIsSkipped,
