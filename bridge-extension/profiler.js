@@ -14,6 +14,7 @@ const DEFAULT_LIMITS = Object.freeze({
     maxCollectionEntries: 512,
     maxPropertiesPerObject: 2048,
     maxPatchedFunctions: 5000,
+    calibrationIterations: 1000,
     batchDelayMs: 50,
     maxBatchEvents: 256,
 });
@@ -58,6 +59,8 @@ const NATIVE_COLLECTION_PROTOTYPES = new Set([
     Set.prototype,
 ]);
 const MAX_RENDERED_KEY_LENGTH = 80;
+const CALIBRATION_ROUNDS = 3;
+const CALIBRATION_WARMUP = 500;
 
 function _emptyStats() {
     return {
@@ -65,6 +68,7 @@ function _emptyStats() {
         visitedObjects: 0,
         skippedFunctions: 0,
         truncated: false,
+        overheadUs: 0,
     };
 }
 
@@ -92,6 +96,10 @@ function _resolvedLimits(overrides) {
         maxPatchedFunctions: _positiveInteger(
             overrides.maxPatchedFunctions,
             DEFAULT_LIMITS.maxPatchedFunctions,
+        ),
+        calibrationIterations: _positiveInteger(
+            overrides.calibrationIterations,
+            DEFAULT_LIMITS.calibrationIterations,
         ),
         batchDelayMs: _positiveInteger(overrides.batchDelayMs, DEFAULT_LIMITS.batchDelayMs),
         maxBatchEvents: _positiveInteger(
@@ -217,6 +225,7 @@ export class Profiler {
     #patches = [];
     #patchedMembers = new WeakMap();
     #discoveryStopped = false;
+    #calibrating = false;
     #callDepth = 0;
     #sessionId = 0;
     #clientSessionId = null;
@@ -293,6 +302,9 @@ export class Profiler {
         try {
             this.#patchGraph(ext.stateObj);
             this.#running = true;
+            // Wrappers short-circuit unless the session is live, so this has
+            // to run after #running is set.
+            this.#stats.overheadUs = this.#measureOverhead();
         } catch (e) {
             // Object/proxy-level failures are handled locally. This is only a
             // last-resort rollback so the target extension is never left half
@@ -656,36 +668,10 @@ export class Profiler {
                 return;
             }
 
-            const original = sourceDesc.value;
-            const funcName = _propertyPrefix(prefix, name);
-            const profiler = this;
-            const sessionId = this.#sessionId;
-            const clientSessionId = this.#clientSessionId;
-            const wrapper = function profiled(...args) {
-                if (!profiler.#running || profiler.#sessionId !== sessionId) {
-                    return Reflect.apply(original, this, args);
-                }
-                const callDepth = profiler.#callDepth++;
-                const start = GLib.get_monotonic_time() / 1e6;
-                try {
-                    return Reflect.apply(original, this, args);
-                } finally {
-                    const end = GLib.get_monotonic_time() / 1e6;
-                    profiler.#callDepth--;
-                    const event = {
-                        type: 'profile_event',
-                        extensionUuid: profiler.#targetUuid,
-                        function: funcName,
-                        start,
-                        end,
-                        depth: callDepth,
-                    };
-                    if (clientSessionId !== null) {
-                        event.sessionId = clientSessionId;
-                    }
-                    profiler.#queueEvent(event);
-                }
-            };
+            const wrapper = this.#makeWrapper(
+                sourceDesc.value,
+                _propertyPrefix(prefix, name),
+            );
 
             let originalDescriptor = null;
             let hadOwn = false;
@@ -728,10 +714,115 @@ export class Profiler {
         }
     }
 
+    /**
+     * Build the timing wrapper installed in place of an extension method.
+     * Shared with calibration so the measured cost is the real one.
+     */
+    #makeWrapper(original, funcName) {
+        const profiler = this;
+        const sessionId = this.#sessionId;
+        const clientSessionId = this.#clientSessionId;
+        return function profiled(...args) {
+            if (!profiler.#running || profiler.#sessionId !== sessionId) {
+                return Reflect.apply(original, this, args);
+            }
+            const callDepth = profiler.#callDepth++;
+            const start = GLib.get_monotonic_time() / 1e6;
+            try {
+                return Reflect.apply(original, this, args);
+            } finally {
+                const end = GLib.get_monotonic_time() / 1e6;
+                profiler.#callDepth--;
+                const event = {
+                    type: 'profile_event',
+                    extensionUuid: profiler.#targetUuid,
+                    function: funcName,
+                    start,
+                    end,
+                    depth: callDepth,
+                };
+                if (clientSessionId !== null) {
+                    event.sessionId = clientSessionId;
+                }
+                profiler.#queueEvent(event);
+            }
+        };
+    }
+
+    // ── Calibration ───────────────────────────────────────────────────────
+
+    /**
+     * Measure what one instrumented call costs beyond a bare call.
+     *
+     * The clock has microsecond resolution, so a row averaging a microsecond
+     * per call is reporting the floor of the scale rather than a duration.
+     * Reporting the wrapper's own cost lets the app mark those rows instead of
+     * presenting them as if they were measurements. Timed against an empty
+     * function, so the difference is wrapper cost and nothing else.
+     *
+     * @returns {number} microseconds per call, never negative
+     */
+    #measureOverhead() {
+        const iterations = this.#limits.calibrationIterations;
+        const bare = function calibrationTarget() {};
+        const wrapped = this.#makeWrapper(bare, '<calibration>');
+        // Calibration events go to a scratch queue; the recording's own queue
+        // is untouched even if calibration throws.
+        const recordingQueue = this.#eventQueue;
+
+        this.#eventQueue = [];
+        this.#calibrating = true;
+        try {
+            // Let the JIT settle before anything is timed.
+            for (let i = 0; i < CALIBRATION_WARMUP; i++) {
+                wrapped();
+                bare();
+            }
+
+            // Take the fastest round. A round can be inflated by GC or by the
+            // scheduler preempting us, never deflated, so the minimum is the
+            // closest estimate of the wrapper's actual cost.
+            let best = Infinity;
+            for (let round = 0; round < CALIBRATION_ROUNDS; round++) {
+                const wrappedStart = GLib.get_monotonic_time();
+                for (let i = 0; i < iterations; i++) {
+                    wrapped();
+                }
+                const wrappedUs = (GLib.get_monotonic_time() - wrappedStart) / iterations;
+
+                const bareStart = GLib.get_monotonic_time();
+                for (let i = 0; i < iterations; i++) {
+                    bare();
+                }
+                const bareUs = (GLib.get_monotonic_time() - bareStart) / iterations;
+
+                best = Math.min(best, wrappedUs - bareUs);
+            }
+
+            return Number.isFinite(best) ? Math.max(best, 0) : 0;
+        } catch (e) {
+            bridgeLogError(e, 'overhead calibration failed');
+            return 0;
+        } finally {
+            this.#calibrating = false;
+            this.#eventQueue = recordingQueue;
+        }
+    }
+
     // ── Event batching ────────────────────────────────────────────────────
 
     #queueEvent(event) {
         this.#eventQueue.push(event);
+        if (this.#calibrating) {
+            // Recycle at the same point a real batch would be flushed, so the
+            // queue never grows past its production size and the measurement
+            // is not distorted by array growth. Sending and scheduling are
+            // amortised costs that do not belong in a per-call figure.
+            if (this.#eventQueue.length >= this.#limits.maxBatchEvents) {
+                this.#eventQueue.length = 0;
+            }
+            return;
+        }
         if (this.#eventQueue.length >= this.#limits.maxBatchEvents) {
             this.#flushEvents();
             return;

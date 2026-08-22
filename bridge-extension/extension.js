@@ -131,6 +131,7 @@ export default class GSEProfilerBridge extends Extension {
                 visitedObjects: 0,
                 skippedFunctions: 0,
                 truncated: false,
+                overheadUs: 0,
             };
             const response = {
                 type: 'profiling_started',

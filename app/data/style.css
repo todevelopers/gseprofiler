@@ -570,6 +570,13 @@ columnview.log-view row {
   font-size: 12px;
 }
 
+/* Rows whose per-call time is at or below the measurement floor: the timings
+   are noise, but the call count still matters, so dim rather than hide. */
+.prof-below-noise {
+  opacity: 0.5;
+  font-style: italic;
+}
+
 /* Keyboard-shortcuts help dialog — keycap chips */
 .keycap {
   font-family: monospace;
