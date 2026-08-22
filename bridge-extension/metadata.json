@@ -8,9 +8,10 @@
     "47",
     "48",
     "49",
-    "50"
+    "50",
+    "51"
   ],
   "url": "https://github.com/todevelopers/gse-profiler",
   "settings-schema": "org.gnome.shell.extensions.gse-profiler-bridge",
-  "bundle-hash": "04f696985cc3b7ac081fc7068cd14fd01393a07f3957c3fca56d38899dba6e69"
+  "bundle-hash": "84911aa9cd1a5daa9a58524bad6a9f84ca90c880624a91d089183b85f5b2d610"
 }

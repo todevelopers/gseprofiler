@@ -52,10 +52,13 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Check if bridge JS files changed
+      - name: Check if hashed bridge files changed
         id: changed
+        # Must mirror what scripts/update-bridge-hash.py digests: JS, the
+        # GSettings schema, and metadata.json (shell-version lives there).
+        # This job's own commit carries [skip ci], so it cannot loop.
         run: |
-          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^bridge-extension/.*\.js$'; then
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^bridge-extension/(.*\.js|metadata\.json|schemas/.*\.gschema\.xml)$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

@@ -79,17 +79,24 @@ ruff check app/ && mypy app/ && pytest tests/ -v --tb=short && npm run lint \
 ## Bridge hash
 
 `bridge-extension/metadata.json` contains a `bundle-hash` field — a SHA-256
-digest over all `*.js` files in `bridge-extension/`. The app uses this hash to
-detect whether the installed bridge is out of date and needs a reinstall.
+digest over everything that gets installed: all `*.js` files, the GSettings
+schema, and `metadata.json` itself (minus the `bundle-hash` field). The app uses
+this hash to detect whether the installed bridge is out of date and needs a
+reinstall.
 
-**Whenever you change any `.js` file in `bridge-extension/`, regenerate the hash:**
+`metadata.json` counts because `shell-version` lives there: a bridge that does
+not list the running GNOME is refused by the shell as out of date, so adding a
+version has to offer users a reinstall exactly like a code change does.
+
+**Whenever you change a `.js` file, the schema, or `metadata.json`, regenerate
+the hash:**
 
 ```bash
 python3 scripts/update-bridge-hash.py
 ```
 
 The script prints whether the hash changed and overwrites `metadata.json` in
-place. Commit the updated file together with your JS changes.
+place. Commit the updated file together with your changes.
 
 > **Note:** CI also runs this script automatically (see [Bridge hash sync](#bridge-hash-sync-job)
 > below) and commits the result if you forget, but it is cleaner to do it yourself.
