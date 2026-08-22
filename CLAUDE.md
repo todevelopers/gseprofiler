@@ -69,7 +69,6 @@ gse-profiler/
 - **UUID:** `gse-profiler-bridge@todevelopers`
 - **Install path:** `~/.local/share/gnome-shell/extensions/gse-profiler-bridge@todevelopers/`
 - Auto-installed by the app on first launch
-- Shows a minimal status indicator in the GNOME panel (no menu needed in V1)
 - After installation, the app triggers a shell restart via D-Bus (see below)
 
 ### Shell Restart Logic
