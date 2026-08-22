@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import secrets
 from collections import deque
 from collections.abc import Callable
@@ -76,12 +77,27 @@ _FN_HINT = (
 _MAX_RAW_EVENTS = 50_000
 
 
+# GLib.get_monotonic_time() counts whole microseconds, so anything at or below
+# this is the floor of the scale rather than a measured duration.
+_TIMER_RESOLUTION_MS = 0.001
+
+_NOISE_HINT = (
+    "At or below the measurement floor — the timer has microsecond resolution"
+    " and the instrumentation wrapper costs about that much per call, so this"
+    " row's timings are noise. Its call count is still accurate."
+)
+
+
 def _fmt_ms(v: float) -> str:
     if v >= 1000.0:
         return f"{v / 1000.0:.2f} s"
     if v >= 1.0:
         return f"{v:.2f} ms"
     return f"{v:.3f} ms"
+
+
+def _fmt_us(v: float) -> str:
+    return f"{v:.2f} µs"
 
 
 def _count_label(count: int, singular: str) -> str:
@@ -101,6 +117,8 @@ class FunctionStat(GObject.Object):
         self.total_ms: float = 0.0
         self.self_ms: float = 0.0
         self.max_ms: float = 0.0
+        # Set per snapshot from the live threshold; see _noise_threshold_ms.
+        self.below_noise: bool = False
 
     @property
     def avg_ms(self) -> float:
@@ -154,6 +172,7 @@ class ProfilerView(Gtk.Stack):
         self._visited_objects: int | None = None
         self._skipped_functions: int | None = None
         self._instrumentation_truncated = False
+        self._overhead_us: float | None = None
 
         # Recording stopwatch
         self._rec_start_ts: float | None = None
@@ -855,6 +874,13 @@ class ProfilerView(Gtk.Stack):
         stat: FunctionStat = item.get_item()
         label: Gtk.Label = item.get_child()
         label.set_text(fmt(getattr(stat, attr)))
+        # List items are recycled, so both branches must be explicit.
+        if stat.below_noise:
+            label.add_css_class("prof-below-noise")
+            label.set_tooltip_text(_NOISE_HINT)
+        else:
+            label.remove_css_class("prof-below-noise")
+            label.set_tooltip_text(None)
 
     @staticmethod
     def _sorter_func(a: FunctionStat, b: FunctionStat, attr: str) -> int:
@@ -1491,11 +1517,32 @@ class ProfilerView(Gtk.Stack):
             return None
         return value
 
+    @staticmethod
+    def _nonnegative_float(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        return float(value)
+
+    @property
+    def _noise_threshold_ms(self) -> float:
+        """Per-call duration at or below which a timing is not a measurement.
+
+        The clock floor always applies. When the bridge reports its calibrated
+        wrapper cost and that is the larger of the two, use it instead: a call
+        cheaper than the instrumentation measuring it cannot be timed
+        meaningfully either.
+        """
+        overhead_ms = (self._overhead_us or 0.0) / 1000.0
+        return max(_TIMER_RESOLUTION_MS, overhead_ms)
+
     def _reset_instrumentation(self) -> None:
         self._instrumented_functions = None
         self._visited_objects = None
         self._skipped_functions = None
         self._instrumentation_truncated = False
+        self._overhead_us = None
         self._update_instrumentation_ui()
 
     def _apply_instrumentation_stats(self, msg: dict[str, Any]) -> None:
@@ -1508,6 +1555,7 @@ class ProfilerView(Gtk.Stack):
             msg.get("skippedFunctions")
         )
         self._instrumentation_truncated = msg.get("truncated") is True
+        self._overhead_us = self._nonnegative_float(msg.get("overheadUs"))
         self._update_instrumentation_ui()
 
     def _update_instrumentation_ui(self) -> None:
@@ -1531,6 +1579,10 @@ class ProfilerView(Gtk.Stack):
             )
         if self._instrumentation_truncated:
             details.append("traversal stopped at a safety limit")
+        if self._overhead_us is not None:
+            details.append(
+                f"instrumentation costs about {_fmt_us(self._overhead_us)} per call"
+            )
         suffix = "\n\nLatest scan: " + " · ".join(details) if details else ""
         self._fn_info.set_tooltip_text(_FN_HINT + suffix)
 
@@ -1621,13 +1673,15 @@ class ProfilerView(Gtk.Stack):
         span_ms = (t1 - t0) * 1000.0
         self._tl_caption.set_text(f"{len(self._raw_events)} events · {_fmt_ms(span_ms)} span")
 
-    @staticmethod
-    def _stat_snapshot(stat: FunctionStat) -> FunctionStat:
+    def _stat_snapshot(self, stat: FunctionStat) -> FunctionStat:
         snap = FunctionStat(stat.name)
         snap.count = stat.count
         snap.total_ms = stat.total_ms
         snap.self_ms = stat.self_ms
         snap.max_ms = stat.max_ms
+        # Stamped at snapshot time so the table reflects the current bridge
+        # calibration without the cell factory needing view state.
+        snap.below_noise = bool(stat.count) and snap.avg_ms <= self._noise_threshold_ms
         return snap
 
     def _recompute_self_times(self) -> None:

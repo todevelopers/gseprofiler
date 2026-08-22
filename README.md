@@ -125,6 +125,24 @@ late batch from before Restart cannot contaminate the fresh recording. For a typ
 Shell extension the overhead is negligible, but extremely tight animation loops or extensions
 that invoke hundreds of functions per frame may see a measurable slowdown during recording.
 
+### Measurement floor
+
+The clock has microsecond resolution, so a row averaging a microsecond per call is reporting
+the bottom of the scale rather than a duration. On top of that, the wrapper itself costs
+something per call, and a call cheaper than the instrumentation timing it cannot be measured
+meaningfully either.
+
+Rather than guess, the bridge measures it. At the start of every recording it times its own
+wrapper against an empty function -- several rounds, keeping the fastest, since a round can
+only be inflated by GC or preemption, never deflated -- and reports the result with the
+instrumentation stats. Calibration runs on a scratch queue, so its calls never enter the
+recording.
+
+The Profiler dims rows whose average per-call time falls at or below whichever is larger, the
+clock floor or the calibrated wrapper cost, and explains why on hover. They are dimmed rather
+than hidden: the timings are noise, but the call count is exact and often the interesting part.
+The measured figure is also shown with the scan details next to the Observed Functions heading.
+
 **What runtime monkey-patching cannot capture automatically:**
 
 - GObject virtual functions (vfuncs)
@@ -164,6 +182,7 @@ into the current Shell process.
 | Profiler: max entries per Array/Map/Set    | 512                           |
 | Profiler: max own properties per object    | 2,048                         |
 | Profiler: max instrumented functions       | 5,000                         |
+| Profiler: overhead calibration             | 3 rounds x 1,000 calls        |
 | Profiler: bridge event batch               | 50 ms or 256 events           |
 | Max recorded events                        | 50,000 (oldest dropped first) |
 | Inspector: max properties per object       | 50                            |

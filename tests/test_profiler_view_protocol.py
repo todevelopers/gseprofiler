@@ -227,3 +227,88 @@ def test_session_ids_reject_events_from_a_superseded_restart(
     view._flush_refresh()
     assert not view._stats
     view._stop_rec_timer()
+
+
+def test_overhead_calibration_sets_the_noise_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = _new_view(tmp_path)
+    view._target_uuid = "x@x"
+    monkeypatch.setattr(
+        view._dbus,
+        "get_extension_state",
+        lambda _uuid: ExtensionState.ENABLED,
+    )
+    view._socket._output = object()
+    monkeypatch.setattr(view._socket, "send", lambda _msg: None)
+
+    # Without a calibrated figure the timer floor alone applies.
+    assert view._overhead_us is None
+    assert view._noise_threshold_ms == 0.001
+
+    assert view._start_profiling() is True
+    session_id = view._active_start_generation
+    view._router.dispatch(
+        {
+            "type": "profiling_started",
+            "uuid": "x@x",
+            "ok": True,
+            "sessionId": session_id,
+            "patchedFunctions": 7,
+            "overheadUs": 2.5,
+        }
+    )
+
+    assert view._overhead_us == 2.5
+    # A wrapper costing 2.5 us outweighs the 1 us clock floor.
+    assert view._noise_threshold_ms == 0.0025
+
+    view._ingest_event(
+        {"function": "noisy", "start": 0.0, "end": 0.000002, "depth": 0},
+        schedule_refresh=False,
+    )
+    view._ingest_event(
+        {"function": "real", "start": 0.0, "end": 0.01, "depth": 0},
+        schedule_refresh=False,
+    )
+    view._flush_refresh()
+
+    verdicts = {
+        view._store.get_item(i).name: view._store.get_item(i).below_noise
+        for i in range(view._store.get_n_items())
+    }
+    assert verdicts == {"noisy": True, "real": False}
+
+    view._stop_profiling()
+    view._stop_rec_timer()
+
+
+def test_malformed_overhead_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = _new_view(tmp_path)
+    view._target_uuid = "x@x"
+    monkeypatch.setattr(
+        view._dbus,
+        "get_extension_state",
+        lambda _uuid: ExtensionState.ENABLED,
+    )
+    view._socket._output = object()
+    monkeypatch.setattr(view._socket, "send", lambda _msg: None)
+
+    for bogus in (-1.0, float("nan"), float("inf"), True, "0.4", None):
+        assert view._start_profiling() is True
+        view._router.dispatch(
+            {
+                "type": "profiling_started",
+                "uuid": "x@x",
+                "ok": True,
+                "sessionId": view._active_start_generation,
+                "overheadUs": bogus,
+            }
+        )
+        assert view._overhead_us is None, bogus
+        assert view._noise_threshold_ms == 0.001
+        view._stop_profiling()
+
+    view._stop_rec_timer()

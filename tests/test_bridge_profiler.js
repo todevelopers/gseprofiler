@@ -175,6 +175,31 @@ function testDataHeavySiblingDoesNotStarvePeers() {
     assert(names.includes('_poller.refresh'), 'every shallow sibling must be instrumented');
 }
 
+function testOverheadCalibration() {
+    const stateObj = { work() { return 'done'; } };
+    const messages = [];
+    const profiler = makeProfiler(stateObj, messages, { calibrationIterations: 50 });
+    assert(profiler.startProfiling('test@example.com'), 'calibrated profiling should start');
+
+    const overhead = profiler.stats.overheadUs;
+    assert(
+        typeof overhead === 'number' && Number.isFinite(overhead) && overhead >= 0,
+        `overheadUs must be a finite non-negative number, got ${String(overhead)}`,
+    );
+    assertEqual(messages.length, 0, 'calibration must not emit a batch');
+
+    assertEqual(stateObj.work(), 'done', 'the patched method must still return its value');
+    profiler.stopProfiling();
+
+    const events = messages.flatMap(message => message.events);
+    assertEqual(events.length, 1, 'only the real call belongs in the recording');
+    assertEqual(
+        events[0].function,
+        'work',
+        'calibration events must never leak into the recording',
+    );
+}
+
 function testExactDescriptorRestoration() {
     const ownOriginal = function ownOriginal() {
         return 'own';
@@ -491,6 +516,7 @@ function testRestartDiscardsOldQueue() {
 const TESTS = [
     testCollectionTraversal,
     testDataHeavySiblingDoesNotStarvePeers,
+    testOverheadCalibration,
     testExactDescriptorRestoration,
     testDistinctSymbolMapPaths,
     testUnpatchableFunctionIsSkipped,
