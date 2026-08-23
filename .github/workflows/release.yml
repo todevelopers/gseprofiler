@@ -90,6 +90,7 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           VERSION="$VERSION" DATE="$DATE" python3 - <<'PYEOF'
           import os, re
+          from xml.sax.saxutils import escape
 
           VERSION = os.environ['VERSION']
           DATE    = os.environ['DATE']
@@ -104,7 +105,11 @@ jobs:
               text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
               text = re.sub(r'\*(.+?)\*',     r'\1', text)
               text = re.sub(r'`(.+?)`',       r'\1', text)
-              return text.strip()
+              # Stripping the backticks exposes whatever they quoted to the
+              # XML parser. A bullet naming a generic type wrote a literal
+              # Map<string, Module> into the document and appstreamcli then
+              # refused the whole file, so escape once the markup is gone.
+              return escape(text.strip())
 
           def flush_items(items, parts):
               if items:
@@ -122,7 +127,7 @@ jobs:
                   line = line.rstrip()
                   if line.startswith('### '):
                       items = flush_items(items, parts)
-                      parts.append(f'        <p>{line[4:].strip()}:</p>')
+                      parts.append(f'        <p>{clean(line[4:])}:</p>')
                   elif line.startswith(('- ', '* ')):
                       items.append(line[2:])
                   elif line and not line.startswith('#'):

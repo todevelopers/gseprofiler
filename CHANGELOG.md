@@ -7,7 +7,7 @@
 
 ### Fixed
 
-- Profiler discovery now traverses Arrays, `Map` values, and `Set` values, so extensions that keep their modules in a collection — `Map<string, Module>` and similar — are instrumented instead of skipped (#23).
+- Profiler discovery now traverses Arrays, `Map` values, and `Set` values, so extensions that keep their modules in a collection — a `Map` of modules keyed by name, and similar — are instrumented instead of skipped (#23).
 - Profiler discovery walks the object graph breadth-first, so a first sibling holding bulk cached data no longer consumes the whole visit budget and starves the objects carrying the extension's actual behaviour.
 - Reaching the visited-objects limit now only marks the scan as truncated instead of stopping discovery outright; the hard stop is reserved for the instrumented-function limit.
 - The bridge's `bundle-hash` now covers `metadata.json`, so a change to `shell-version`, `uuid`, or `settings-schema` triggers the reinstall prompt instead of leaving an outdated copy on disk.
