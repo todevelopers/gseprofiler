@@ -27,9 +27,10 @@ properties, values and nested objects while it runs.
 
 | Feature               | Description                                                                                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Extension Manager** | Browse all installed extensions with status, enable/disable with one click, open the source folder directly                                                 |
+| **Extension Manager** | Browse all installed extensions with status, enable/disable with one click, open the source folder or preferences, star the ones you work on, uninstall the ones you don't |
+| **Install Sources**   | Install extensions straight from **GitHub** (`owner/repo`, a repository URL, or the URL of a subdirectory) or **extensions.gnome.org** (search as you type, or paste a URL / UUID). Both check shell-version compatibility and flag updates for what they installed |
 | **Log Viewer**        | Live systemd journal stream. Captures the `gnome-shell` process by default (that's where all extensions actually run), with structured capture controls (scope, boot, source preset, priority) and a raw `journalctl` override when you want full control. Filter by log level, extension tag, and full-text search in real time |
-| **Profiler**          | Monkey-patch any extension at runtime. No code changes needed. Visualise timing as a flamegraph, swimlane, or histogram; export and reload sessions as JSON |
+| **Profiler**          | Monkey-patch any extension at runtime. No code changes needed. Visualise timing as a flamegraph, swimlane, or histogram; save and reload sessions as JSON, or export them for speedscope and Firefox Profiler / Perfetto |
 | **Inspector**         | Inspect a live extension object: browse its properties and methods, see current values, and call methods interactively                                      |
 
 ---
@@ -38,9 +39,10 @@ properties, values and nested objects while it runs.
 
 The two **global** shortcuts are handled inside `gnome-shell` by the bridge, so
 they work even when the GSE Profiler window is not focused — handy while you
-click around in the extension you're profiling. All other shortcuts are
-scoped to the currently selected tab. The full list is available in-app from
-the menu → **Keyboard Shortcuts** (or `Ctrl+?`).
+click around in the extension you're profiling. The rest are handled by the
+app: **window** shortcuts work anywhere in it, **tab** shortcuts act on
+whichever tab is selected. The full list is available in-app from the menu →
+**Keyboard Shortcuts** (or `Ctrl+?`).
 
 | Shortcut          | Action                                              | Scope   |
 | ----------------- | --------------------------------------------------- | ------- |
@@ -49,11 +51,20 @@ the menu → **Keyboard Shortcuts** (or `Ctrl+?`).
 | `Ctrl+1…4`        | Switch tab (Details / Profiler / Inspector / Logs)  | window  |
 | `F9`              | Toggle the extension sidebar                         | window  |
 | `Ctrl+?` / `F1`   | Show the keyboard-shortcuts dialog                   | window  |
+| `Ctrl+Q`          | Quit                                                 | window  |
 | `Ctrl+R`          | Primary action of the tab (start-stop / refresh)    | tab     |
 | `Ctrl+F`          | Focus the filter / search field                      | tab     |
 | `Ctrl+S`          | Save profile / export log                            | tab     |
 | `Ctrl+O`          | Load a saved profile (Profiler)                      | tab     |
 | `Ctrl+L`          | Clear profiling data / log                           | tab     |
+
+Every one of them is rebindable, and the same dialog is the editor: click a
+row, press the new combination, and it's stored — undo a single row or hit
+**Reset All** to go back to the defaults. Conflicts inside a scope are
+flagged as you capture. Window and tab overrides are saved to
+`shortcuts.json`; the global pair lives in GSettings and is written by the
+bridge on the app's behalf, so rebinding works from inside the Flatpak
+sandbox, which has no dconf access of its own.
 
 The global shortcuts register only after the bridge extension is installed and
 GNOME Shell has reloaded (the usual log out / back in).
@@ -133,8 +144,8 @@ something per call, and a call cheaper than the instrumentation timing it cannot
 meaningfully either.
 
 Rather than guess, the bridge measures it. At the start of every recording it times its own
-wrapper against an empty function -- several rounds, keeping the fastest, since a round can
-only be inflated by GC or preemption, never deflated -- and reports the result with the
+wrapper against an empty function — several rounds, keeping the fastest, since a round can
+only be inflated by GC or preemption, never deflated — and reports the result with the
 instrumentation stats. Calibration runs on a scratch queue, so its calls never enter the
 recording.
 
@@ -182,7 +193,7 @@ into the current Shell process.
 | Profiler: max entries per Array/Map/Set    | 512                           |
 | Profiler: max own properties per object    | 2,048                         |
 | Profiler: max instrumented functions       | 5,000                         |
-| Profiler: overhead calibration             | 3 rounds x 1,000 calls        |
+| Profiler: overhead calibration             | 3 rounds × 1,000 calls        |
 | Profiler: bridge event batch               | 50 ms or 256 events           |
 | Max recorded events                        | 50,000 (oldest dropped first) |
 | Inspector: max properties per object       | 50                            |
@@ -209,6 +220,15 @@ without the call-depth nesting getting in the way.
 **Histogram.** Functions ranked by *self-time*, the wall-clock time spent in a function's own
 code, not counting its callees. This is the fastest way to answer *where is the time actually
 going?*, because it ignores time that really belongs to the callee.
+
+### Saving and exporting a session
+
+**Save** writes the recording to GSE Profiler's own JSON, which is the only format it can load
+back in — use it whenever you want to reopen the session here later, or attach it to a bug
+report. The dropdown next to it converts the same events for two external viewers instead:
+**speedscope** and the Chrome trace-event format read by **Firefox Profiler** and **Perfetto**.
+Those two are one-way; nothing about them is specific to GSE Profiler, which is the point if you
+want to share a profile with someone who doesn't run it.
 
 ---
 
@@ -237,7 +257,7 @@ going?*, because it ignores time that really belongs to the callee.
 
 ## Install
 
-> Requires GNOME Shell 46+ in an active **Wayland** GNOME session.
+> Requires GNOME Shell 46–51 in an active **Wayland** GNOME session.
 
 ### Option 1: Flatpak remote (recommended)
 
@@ -292,7 +312,7 @@ on your system is touched.
 
 ## Requirements
 
-- GNOME Shell 46+ (tested up to 50)
+- GNOME Shell 46–51 (the version range the bridge extension declares support for)
 - Python 3.11+
 - GTK 4 and libadwaita 1
 - PyGObject (GTK4 bindings)
@@ -306,27 +326,40 @@ on your system is touched.
 gse-profiler/
 ├── app/                        # GTK4 Python application
 │   ├── main.py
+│   ├── data/                   # application icons
 │   ├── ui/
 │   │   ├── extension_manager.py
 │   │   ├── extension_list.py
 │   │   ├── details_view.py
-│   │   ├── log_viewer.py
+│   │   ├── install_dialog.py   # install from GitHub / extensions.gnome.org
+│   │   ├── shortcuts_dialog.py # shortcut list and editor
+│   │   ├── log_viewer/         # journal view, capture panel, tag bar
 │   │   ├── profiler_view.py
 │   │   ├── profiler/           # flamegraph, swimlane, histogram widgets
 │   │   └── inspector_view.py
 │   └── core/
 │       ├── dbus_client.py      # D-Bus proxy for gnome-shell APIs
 │       ├── socket_server.py    # Unix socket server (async)
+│       ├── message_router.py   # dispatch of incoming bridge messages
 │       ├── bridge_manager.py   # bridge install / update / hash check
-│       └── journal_reader.py   # systemd journal reader (systemd.journal.Reader)
+│       ├── journal_reader.py   # systemd journal reader (systemd.journal.Reader)
+│       ├── github_installer.py # install / update from a GitHub repository
+│       ├── ego_client.py       # extensions.gnome.org search and info API
+│       ├── ego_installer.py    # install / update from extensions.gnome.org
+│       ├── source_registry.py  # where each app-installed extension came from
+│       ├── exporters.py        # speedscope / Chrome trace-event serializers
+│       ├── keybindings.py      # shortcut catalog and persistence
+│       └── settings.py         # persisted app settings
 ├── bridge-extension/           # GJS GNOME Shell extension
 │   ├── extension.js
 │   ├── profiler.js
 │   ├── inspector.js
 │   ├── socket_client.js
+│   ├── logger.js
+│   ├── schemas/                # GSettings schema for the global shortcuts
 │   └── metadata.json
 ├── build-aux/                  # Flatpak manifest and launcher
-├── data/                       # .desktop, AppStream metainfo, icons
+├── data/                       # .desktop, AppStream metainfo, screenshots
 ├── docs/                       # architecture diagrams
 ├── scripts/                    # setup / uninstall helpers
 └── tests/                      # pytest unit tests
