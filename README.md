@@ -235,10 +235,10 @@ want to share a profile with someone who doesn't run it.
 ## Gallery
 
 <p align="center">
-  <picture>
-    <img width="720" height="406" alt="gse-profiler-preview" src="https://github.com/user-attachments/assets/775c17be-fd89-44f3-892f-3d2e853f4e64" />
-  </picture>
+  <img width="900" alt="GSE Profiler profiling a GNOME Shell extension" src="docs/promo/gse-profiler-promo.webp" />
 </p>
+
+<p align="center"><sub>Desktop wallpaper in the video: GNOME Backgrounds, CC BY-SA 3.0.</sub></p>
 
 <details>
 <summary><b>📸 Screenshots</b> (click to expand)</summary>
