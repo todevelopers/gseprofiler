@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GSE Profiler promo</title>
+<style>
+@font-face{font-family:"Adwaita Sans";src:url("capture/fonts/adwaita-fonts-48.2/sans/AdwaitaSans-Regular.ttf");font-weight:100 900}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1280px;height:720px;overflow:hidden;background:#000;font-family:"Adwaita Sans",sans-serif;-webkit-font-smoothing:antialiased}
+#stage{position:relative;width:1280px;height:720px;overflow:hidden}
+
+/* The "screen": a GNOME desktop in logical pixels, moved as a whole by the camera. */
+#world{position:absolute;left:0;top:0;width:1640px;height:923px;transform-origin:0 0;background:url("wall.webp") center/cover}
+
+/* GNOME Shell top bar */
+#panel{position:absolute;left:0;top:0;right:0;height:32px;background:#000;color:#fff;font-size:14.6px;font-weight:700;display:flex;align-items:center;justify-content:space-between;padding:0 12px}
+#panel .ws{display:flex;align-items:center;gap:6px;padding:0 10px}
+#panel .ws i{display:block;height:8px;border-radius:8px;background:#fff}
+#panel .clock{position:absolute;left:50%;transform:translateX(-50%)}
+#panel .right{display:flex;align-items:center;gap:6px}
+#panel .grp{display:flex;align-items:center;gap:10px;padding:0 10px}
+#panel img{width:16px;height:16px;filter:brightness(0) invert(1)}
+
+/* real application window */
+#win{position:absolute;left:230px;top:88px;width:1180px;height:780px;transform-origin:50% 55%;opacity:0;
+  filter:drop-shadow(0 0 1px rgba(0,0,0,.6)) drop-shadow(0 4px 10px rgba(0,0,0,.28)) drop-shadow(0 18px 46px rgba(0,0,0,.42))}
+#win img{position:absolute;left:0;top:0;width:1180px;height:780px;visibility:hidden}
+
+/* labels use the libadwaita tooltip look */
+.tip{position:absolute;white-space:nowrap;background:rgba(0,0,0,.82);color:#fff;border-radius:9px;padding:6px 11px;font-size:14px;line-height:18px;opacity:0;z-index:5}
+.tip b{font-weight:700}
+.tip span{opacity:.82}
+#cursor{position:absolute;left:0;top:0;width:24px;height:24px;z-index:8;opacity:0}
+
+#end{position:absolute;left:0;top:32px;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;opacity:0;text-align:center}
+#end h1{font-size:60px;font-weight:800;letter-spacing:-.02em;margin-top:22px}
+#end p{font-size:27px;margin-top:14px;opacity:.92}
+#end small{font-size:22px;margin-top:10px;opacity:.62}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="world">
+    <div id="end">
+      <img src="icon.svg" width="150" height="150" alt="">
+      <h1>GSE Profiler</h1>
+      <p>Available on Flatpark</p>
+      <small>flatpark.org</small>
+    </div>
+    <div id="win"></div>
+    <div id="panel">
+      <div class="ws"><i style="width:34px"></i><i style="width:8px;opacity:.5"></i></div>
+      <div class="clock">Nov 13&nbsp;&nbsp;15:14</div>
+      <div class="right">
+        <div class="grp"><img src="icons/network-wireless-signal-excellent-symbolic.svg" alt=""><img src="icons/audio-volume-high-symbolic.svg" alt=""><img src="icons/battery-level-100-symbolic.svg" alt=""></div>
+      </div>
+    </div>
+    <svg id="cursor" viewBox="0 0 22 22"><path d="M3 2 L3 17 L7.2 13.4 L10 19.6 L12.6 18.4 L9.9 12.4 L15.4 12.2 Z" fill="#1e1e1e" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>
+  </div>
+</div>
+
+<script>
+'use strict';
+const SHOTS = 'capture/shots/';
+const SW = 1640, SH = 923, WX = 230, WY = 88;
+const Z0 = 1280 / SW;
+const LIVE0 = 4.4, LIVE_N = 44, LIVE_DT = 0.125;
+
+// [time, shot] — the window content simply changes, as it does in the running app
+const shots = [[0, 'ready'], [3.05, 'armed']];
+for (let i = 0; i < LIVE_N; i++) shots.push([LIVE0 + i * LIVE_DT, 'live_' + String(i).padStart(3, '0')]);
+shots.push([11.6, 'swimlane'], [15.4, 'histogram'], [19.0, 'table_noise'], [23.7, 'inspector'], [25.3, 'logs']);
+
+// camera keyframes [time, centre x, centre y, zoom] in screen coordinates; one smooth path
+const VIEW = [945, 395, 1.25], TABLE = [950, 632, 1.25];
+const cam = [[0, 820, 461.5, Z0], [3.4, 820, 461.5, Z0], [7.6, ...VIEW], [18.5, ...VIEW], [20.7, ...TABLE],
+  [22.8, ...TABLE], [24.7, 820, 461.5, Z0], [30, 820, 461.5, Z0]];
+
+// labels [start, end, x, y, anchor, bold, rest] in window coordinates
+const tips = [
+  [1.1, 2.95, 1166, 96, 'r', 'Start', 'or Super+F5 from anywhere'],
+  [3.35, 4.45, 721, 612, 'c', 'No code changes', 'instrumented at runtime'],
+  [5.2, 11.3, 532, 211, 'l', 'Flamegraph', 'what called what'],
+  [11.9, 15.1, 532, 211, 'l', 'Swimlane', 'when and how often'],
+  [15.7, 18.7, 532, 211, 'l', 'Histogram', 'where the time goes'],
+  [19.4, 22.6, 738, 486, 'l', 'Timing noise', 'dimmed'],
+  [24.0, 25.15, 560, 55, 'l', 'Inspector', 'walk any live object'],
+  [25.55, 26.5, 540, 119, 'l', 'Logs', 'filtered to your extension'],
+];
+
+const winEl = document.getElementById('win'), world = document.getElementById('world');
+const imgs = shots.map(s => { const i = new Image(); i.src = SHOTS + s[1] + '.png'; winEl.appendChild(i); return i; });
+const tipEls = tips.map(t => {
+  const d = document.createElement('div'); d.className = 'tip';
+  d.innerHTML = `<b>${t[5]}</b> <span>· ${t[6]}</span>`;
+  d.style.top = t[3] + 'px';
+  if (t[4] === 'r') d.style.right = (1180 - t[2]) + 'px';
+  else { d.style.left = t[2] + 'px'; if (t[4] === 'c') d.dataset.c = 1; }
+  winEl.appendChild(d); return d;
+});
+const cursorEl = document.getElementById('cursor'), endEl = document.getElementById('end');
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = p => p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const out = p => 1 - Math.pow(1 - p, 3);
+
+// Cubic Hermite through the camera keys with Catmull-Rom tangents (zero where the camera rests).
+const keys = cam.map(k => [k[0], k[1], k[2], Math.log(k[3])]);
+const tangent = (i, c) => {
+  if (i === 0 || i === keys.length - 1) return 0;
+  const a = keys[i - 1], b = keys[i], n = keys[i + 1];
+  if (a[c] === b[c] || n[c] === b[c]) return 0;
+  return (n[c] - a[c]) / (n[0] - a[0]);
+};
+function camera(t) {
+  let i = 0;
+  while (i < keys.length - 2 && t >= keys[i + 1][0]) i++;
+  const a = keys[i], b = keys[i + 1], h = b[0] - a[0], s = clamp((t - a[0]) / h);
+  const s2 = s * s, s3 = s2 * s;
+  const v = [1, 2, 3].map(c => (2 * s3 - 3 * s2 + 1) * a[c] + (s3 - 2 * s2 + s) * h * tangent(i, c)
+    + (-2 * s3 + 3 * s2) * b[c] + (s3 - s2) * h * tangent(i + 1, c));
+  const z = Math.max(Z0, Math.exp(v[2]));
+  return [clamp(v[0], 640 / z, SW - 640 / z), clamp(v[1], 360 / z, SH - 360 / z), z];
+}
+
+const BTN = [WX + 1128, WY + 69];
+window.seek = t => {
+  const [cx, cy, z] = camera(t);
+  world.style.transform = `translate(${640 - cx * z}px,${360 - cy * z}px) scale(${z})`;
+
+  // window opens and closes the way GNOME Shell animates it
+  const o = out(clamp((t - .5) / .4)), c = ease(clamp((t - 26.6) / .35));
+  winEl.style.opacity = o * (1 - c);
+  winEl.style.transform = `scale(${(.94 + .06 * o) * (1 - .06 * c)})`;
+
+  let cur = 0;
+  for (let i = 0; i < shots.length; i++) if (t >= shots[i][0]) cur = i;
+  imgs.forEach((im, i) => { im.style.visibility = i === cur ? 'visible' : 'hidden'; });
+
+  tips.forEach((tp, i) => {
+    const a = out(clamp((t - tp[0]) / .35)) * (1 - clamp((t - tp[1]) / .25));
+    tipEls[i].style.opacity = a;
+    tipEls[i].style.transform = `${tipEls[i].dataset.c ? 'translateX(-50%) ' : ''}translateY(${(1 - a) * 4}px)`;
+  });
+
+  const cp = ease(clamp((t - 1.5) / 1.3));
+  const px = 1000 + (BTN[0] - 1000) * cp, py = 620 + (BTN[1] - 620) * cp;
+  const press = 1 - .16 * clamp(1 - Math.abs(t - 3.0) / .1);
+  cursorEl.style.transform = `translate(${px}px,${py}px) scale(${press})`;
+  cursorEl.style.opacity = clamp((t - 1.2) / .3) * (1 - clamp((t - 3.6) / .4));
+
+  endEl.style.opacity = out(clamp((t - 27.0) / .6));
+  endEl.style.transform = `translateY(${(1 - out(clamp((t - 27.0) / .6))) * 10}px)`;
+};
+window.DURATION = 30;
+window.ready = Promise.all(imgs.map(i => i.decode())).then(() => document.fonts.ready);
+const q = new URLSearchParams(location.search);
+if (q.has('t')) window.ready.then(() => seek(+q.get('t')));
+</script>
+</body>
+</html>
